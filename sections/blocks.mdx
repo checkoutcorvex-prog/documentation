@@ -1,0 +1,266 @@
+---
+title: "Section Blocks: Repeatable Editor Sub-Elements"
+description: "Declare, consume, and style blocks in Corvex Store sections — the editor's drag-and-drop repeatable items for testimonials, FAQ, slides, and more."
+---
+
+Blocks are **repeatable sub-elements** within a section. Shoppers add, remove, reorder, and configure blocks individually through the editor panel. Use blocks whenever a section contains a list of structurally similar items: slides, testimonials, FAQ entries, feature cards, or tutorial steps.
+
+## Declaring blocks in the schema
+
+```json
+{
+  "name": "Testimonials",
+  "settings": [
+    { "type": "text", "id": "title", "label": "Section title" }
+  ],
+  "blocks": [
+    {
+      "type": "testimonial",
+      "name": "Testimonial",
+      "settings": [
+        { "type": "image_picker", "id": "avatar", "label": "Photo" },
+        { "type": "text",         "id": "name",   "label": "Name"  },
+        { "type": "textarea",     "id": "text",   "label": "Text"  },
+        { "type": "range",        "id": "rating", "label": "Stars", "min": 1, "max": 5, "step": 1, "default": 5 }
+      ]
+    }
+  ],
+  "max_blocks": 12
+}
+```
+
+### Multiple block types
+
+A section can accept more than one block type, each with its own settings:
+
+```json
+"blocks": [
+  {
+    "type": "image",
+    "name": "Image",
+    "settings": [
+      { "type": "image_picker", "id": "src", "label": "Image" },
+      { "type": "text",         "id": "alt", "label": "Alt text" }
+    ]
+  },
+  {
+    "type": "video",
+    "name": "Video",
+    "settings": [
+      { "type": "url",  "id": "src",    "label": "Video URL (MP4)" },
+      { "type": "text", "id": "poster", "label": "Cover image" }
+    ]
+  },
+  {
+    "type": "quote",
+    "name": "Quote",
+    "settings": [
+      { "type": "textarea", "id": "text",   "label": "Text"   },
+      { "type": "text",     "id": "author", "label": "Author" }
+    ]
+  }
+]
+```
+
+In the editor panel, shoppers click "Add block" and choose from the declared types.
+
+## Consuming blocks in Liquid
+
+### Basic iteration
+
+```liquid
+{% for block in section.blocks %}
+  <div class="item" data-block="{{ block.type }}" data-block-id="{{ block.id }}">
+    {{ block.settings.name }}
+  </div>
+{% endfor %}
+```
+
+Each `block` in the loop is an object with:
+
+| Property | Description |
+|---|---|
+| `block.id` | Unique ID for this block instance. Use in `data-block-id`. |
+| `block.type` | Type declared in the schema (e.g., `"testimonial"`). |
+| `block.settings.*` | Settings configured for this block. |
+
+### Handling multiple block types
+
+```liquid
+{% for block in section.blocks %}
+  {% case block.type %}
+    {% when 'image' %}
+      <img src="{{ block.settings.src | img_url: '600x' }}" alt="{{ block.settings.alt }}">
+    {% when 'video' %}
+      <video src="{{ block.settings.src }}" poster="{{ block.settings.poster }}" controls></video>
+    {% when 'quote' %}
+      <blockquote>{{ block.settings.text }} — <cite>{{ block.settings.author }}</cite></blockquote>
+  {% endcase %}
+{% endfor %}
+```
+
+### Handling the empty state
+
+Always account for the case where no blocks have been configured yet:
+
+```liquid
+{% if section.blocks.size > 0 %}
+  <ul>
+    {% for block in section.blocks %}
+      <li>{{ block.settings.text }}</li>
+    {% endfor %}
+  </ul>
+{% else %}
+  <p>Add blocks in the sidebar to populate this section.</p>
+{% endif %}
+```
+
+This prevents broken layouts when a shopper adds the section but hasn't configured it yet.
+
+## Required block attributes
+
+Every rendered block **must** include `data-block` and `data-block-id`. The editor needs these to:
+
+- Highlight a block in the preview when the shopper clicks it in the side panel.
+- Enable drag-and-drop reordering.
+- Identify which block to edit when the shopper clicks in the preview.
+
+```liquid
+{% for block in section.blocks %}
+  <article data-block="{{ block.type }}" data-block-id="{{ block.id }}">
+    ...
+  </article>
+{% endfor %}
+```
+
+<Warning>
+Without these attributes, the editor UX breaks silently — shoppers cannot click a block to edit it.
+</Warning>
+
+## `max_blocks`
+
+Defines the total number of blocks accepted by the section across **all types combined**:
+
+```json
+{
+  "blocks": [
+    { "type": "image", "name": "Image", "settings": [...] },
+    { "type": "text",  "name": "Text",  "settings": [...] }
+  ],
+  "max_blocks": 5
+}
+```
+
+With this configuration, shoppers can have at most five blocks in the section regardless of type. The editor disables the "Add block" button once the limit is reached.
+
+If `max_blocks` is omitted there is no limit, but performance starts to degrade after roughly 40 blocks.
+
+## Presets with blocks
+
+Presets can include pre-configured blocks so shoppers start with a meaningful initial state:
+
+```json
+"presets": [
+  {
+    "name": "3 testimonials",
+    "settings": { "title": "What our customers say" },
+    "blocks": [
+      { "type": "testimonial", "settings": { "name": "Alex",   "rating": 5 } },
+      { "type": "testimonial", "settings": { "name": "Sam",    "rating": 5 } },
+      { "type": "testimonial", "settings": { "name": "Jordan", "rating": 4 } }
+    ]
+  }
+]
+```
+
+When a shopper adds this section, they see three ready-made testimonial cards rather than an empty section.
+
+## Adding interactivity per block
+
+When each block needs independent behavior (for example, each FAQ entry expands and collapses individually), combine `data-block-id` with `data-ref` and scope your JavaScript to the block:
+
+```liquid
+<section data-section-type="faq" data-section-id="{{ section.id }}">
+  {% for block in section.blocks %}
+    <div data-block="question" data-block-id="{{ block.id }}">
+      <button data-ref="toggle" data-action="toggle-answer">
+        {{ block.settings.question }}
+      </button>
+      <div data-ref="answer" hidden>
+        {{ block.settings.answer }}
+      </div>
+    </div>
+  {% endfor %}
+</section>
+```
+
+```typescript
+class FaqSection extends BaseSection {
+  static readonly type = 'faq';
+
+  mount() {
+    this.delegate('click', {
+      'toggle-answer': (trigger) => {
+        const block = trigger.closest<HTMLElement>('[data-block-id]');
+        if (!block) return;
+
+        const answer = block.querySelector<HTMLElement>('[data-ref="answer"]');
+        if (!answer) return;
+
+        answer.hidden = !answer.hidden;
+        trigger.dataset.state = answer.hidden ? 'closed' : 'open';
+      },
+    });
+  }
+}
+
+defineSection(FaqSection);
+```
+
+The key technique is scoping to the block via `trigger.closest('[data-block-id]')`. Each block operates independently without requiring per-block listeners.
+
+## Styling blocks
+
+Blocks share the section's `{% style %}` block. Use `section.id` for the outer scope and BEM for the block elements:
+
+```liquid
+{% style %}
+  .faq-{{ section.id }} { background: {{ section.settings.bg }}; }
+
+  .faq-{{ section.id }} .faq__item {
+    border-bottom: 1px solid {{ section.settings.divider_color }};
+    padding: 20px 0;
+  }
+
+  .faq-{{ section.id }} .faq__item[data-state="open"] .faq__answer {
+    display: block;
+  }
+{% endstyle %}
+
+<section class="faq faq-{{ section.id }}" data-section-type="faq" data-section-id="{{ section.id }}">
+  {% for block in section.blocks %}
+    <div class="faq__item"
+         data-block="question"
+         data-block-id="{{ block.id }}"
+         data-state="closed">
+      <button class="faq__question" data-action="toggle-answer">
+        {{ block.settings.question }}
+      </button>
+      <div class="faq__answer" hidden>
+        {{ block.settings.answer }}
+      </div>
+    </div>
+  {% endfor %}
+</section>
+```
+
+## Known limitations
+
+- **Blocks cannot be nested.** A section is the direct parent of blocks; there is no deeper hierarchy.
+- **Drag-and-drop order is saved to the database**, but the preview does not update in real time during the drag — only after releasing.
+- **Each block type requires its own settings.** If you need two blocks of the same type with different settings, declare them as separate types with the same `name`.
+
+## When not to use blocks
+
+- If items are **homogeneous and fixed** (e.g., standard payment icons in a footer), use a `multiselect` setting or a `link_list` instead.
+- If items come from dynamic data (products, collections), use `product_list` or iterate with `{% for product in products %}` — blocks are for statically configurable content.

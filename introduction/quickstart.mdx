@@ -1,0 +1,276 @@
+---
+title: "Quickstart — run Corvex Store in 10 minutes"
+description: "Clone the repo, configure your environment, start the services, and create your first custom section with a live editor preview — all in under 10 minutes."
+---
+
+This guide takes you from zero to a working Corvex Store environment with your first custom section rendering in the visual editor. You'll need Node.js, Git, and a running PostgreSQL instance. Redis is optional in development.
+
+<Tip>
+After completing this guide, continue to [Sections anatomy](/sections/anatomy) to understand the full structure of a section before building something more complex.
+</Tip>
+
+## Prerequisites
+
+- Node.js **20+** and npm **10+**
+- PostgreSQL **15+** (local or [Supabase](https://supabase.com))
+- Redis **6+** (optional in development, required in production)
+
+Verify your versions before continuing:
+
+```bash
+node -v
+npm -v
+psql --version
+redis-cli --version
+```
+
+<Steps>
+
+<Step title="Clone and install">
+
+Clone the repository and install dependencies. Corvex uses npm workspaces, so a single install covers all packages:
+
+```bash
+git clone <repo> corvex-store
+cd corvex-store
+npm install
+```
+
+</Step>
+
+<Step title="Configure environment variables">
+
+Copy the example `.env` files and fill in your values:
+
+```bash
+cp packages/render-backend/.env.example  packages/render-backend/.env
+cp packages/editor-frontend/.env.example packages/editor-frontend/.env
+```
+
+Minimum required variables for the render backend (`packages/render-backend/.env`):
+
+```
+DATABASE_URL=postgresql://user:pass@localhost:5432/corvex
+REDIS_URL=redis://localhost:6379
+PRODUCTS_API_URL=http://localhost:3333
+PORT=3000
+```
+
+Editor frontend (`packages/editor-frontend/.env`):
+
+```
+NEXT_PUBLIC_RENDER_URL=http://localhost:3000
+NEXT_PUBLIC_EDITOR_URL=http://localhost:3001
+```
+
+</Step>
+
+<Step title="Run database migrations">
+
+```bash
+cd packages/render-backend
+npx prisma migrate deploy
+cd ../..
+```
+
+</Step>
+
+<Step title="Start the services">
+
+Open two terminal windows and start each service:
+
+```bash
+# Terminal 1 — render backend
+npm run dev --workspace=packages/render-backend
+# Listening on http://localhost:3000
+```
+
+```bash
+# Terminal 2 — editor frontend
+npm run dev --workspace=packages/editor-frontend
+# Listening on http://localhost:3001
+```
+
+</Step>
+
+<Step title="Build section bundles">
+
+Section JavaScript needs to be compiled before it can be served. In development, use watch mode so bundles rebuild automatically as you edit:
+
+```bash
+npm run build:sections:watch --workspace=render-backend
+```
+
+For a one-time build:
+
+```bash
+npm run build:sections --workspace=render-backend
+```
+
+Bundles are output to `packages/render-backend/public-assets/sections/` and served at `/assets/sections/*`.
+
+</Step>
+
+<Step title="Create a store">
+
+```bash
+curl -X POST http://localhost:3000/api/stores \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name":        "My Test Store",
+    "slug":        "my-store",
+    "description": "Demo store"
+  }'
+```
+
+Copy the `storeId` from the response — you'll use it in the next steps.
+
+</Step>
+
+<Step title="Add a page to the store">
+
+```bash
+curl -X POST http://localhost:3000/api/stores/STORE_ID/pages \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name":     "Home",
+    "slug":     "",
+    "template": "index",
+    "sections": []
+  }'
+```
+
+Copy the `pageId` from the response.
+
+</Step>
+
+<Step title="Create your first section">
+
+Create two files in the built-in component library. Using the built-in path means your section is available to all stores without needing a pre-existing theme.
+
+<Info>
+**Two placement options:**
+- **Built-in (this tutorial):** `packages/render-backend/component-library/my-banner/` — available to all stores.
+- **Per-store theme:** use the File Manager at `/files?storeId={id}` to create `sections/my-banner/` inside a specific store's theme.
+</Info>
+
+**`sections/my-banner/schema.json`**
+
+```json
+{
+  "name": "My Banner",
+  "category": "content",
+  "settings": [
+    {
+      "type":    "text",
+      "id":      "title",
+      "label":   "Heading",
+      "default": "Welcome!"
+    },
+    {
+      "type":    "color",
+      "id":      "bg",
+      "label":   "Background color",
+      "default": "#f5f5f5"
+    }
+  ],
+  "presets": [
+    {
+      "name":     "Default",
+      "settings": { "title": "Hello world", "bg": "#fafafa" }
+    }
+  ]
+}
+```
+
+**`sections/my-banner/template.liquid`**
+
+```liquid
+{% style %}
+  .banner-{{ section.id }} {
+    background: {{ section.settings.bg }};
+    padding: 4rem 2rem;
+    text-align: center;
+    border-radius: 8px;
+  }
+
+  .banner-{{ section.id }} h1 {
+    font-size: 2.5rem;
+    margin: 0;
+  }
+{% endstyle %}
+
+<section class="banner banner-{{ section.id }}"
+         data-section-type="{{ section.type }}"
+         data-section-id="{{ section.id }}">
+  <h1>{{ section.settings.title }}</h1>
+</section>
+```
+
+<Warning>
+`data-section-type` and `data-section-id` on the root element are **required**. Without them the editor cannot select the section, and the JavaScript registry cannot initialize it. See [Data attributes](/sections/data-attributes).
+</Warning>
+
+</Step>
+
+<Step title="Add the section to your page">
+
+```bash
+curl -X POST http://localhost:3000/api/stores/STORE_ID/pages/PAGE_ID/sections \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type":     "my-banner",
+    "settings": { "title": "My first section" }
+  }'
+```
+
+</Step>
+
+<Step title="Open the editor and preview">
+
+Open the editor in your browser:
+
+```
+http://localhost:3001/editor?storeId=STORE_ID
+```
+
+You'll see:
+
+- Your section listed in the **left sidebar**.
+- A live preview in the **center iframe**.
+- An editable settings panel in the **right sidebar**.
+
+Try changing the heading or background color — the preview updates in real time via WebSocket.
+
+</Step>
+
+<Step title="Publish your store">
+
+Click **Publish** in the editor. Corvex creates an immutable snapshot of your theme and pre-renders all pages.
+
+View the published version:
+
+```
+http://localhost:3000/s/my-store
+```
+
+</Step>
+
+</Steps>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Section anatomy" href="/sections/anatomy">
+    Understand every file in a section: template, schema, styles, and preview.
+  </Card>
+  <Card title="Schema reference" href="/sections/schema-reference">
+    All available setting types: text, color, image picker, range, and more.
+  </Card>
+  <Card title="Add interactivity" href="/sections/base-section">
+    Use `BaseSection` to add JavaScript with auto-cleanup and typed options.
+  </Card>
+  <Card title="Create a full theme" href="/guides/create-theme">
+    Build a complete theme from scratch with layout, templates, and sections.
+  </Card>
+</CardGroup>

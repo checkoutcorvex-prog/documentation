@@ -1,0 +1,378 @@
+---
+title: "Build a Corvex Theme from Scratch"
+description: "Step-by-step guide to creating a complete Corvex Store theme from scratch: layout file, global CSS, settings schema, your first section, and publishing."
+---
+
+Building a theme in Corvex Store means creating the layout shell that wraps every page, a global stylesheet, and at least one custom section. This guide walks you through each step — from initializing your store to publishing your first live theme — with copy-ready code for all the essential files.
+
+## Prerequisites
+
+<CardGroup cols={3}>
+  <Card title="Corvex account" icon="user">
+    A Corvex Store account with at least one store created
+  </Card>
+  <Card title="API access" icon="key">
+    Your `storeId` from `GET /api/stores`
+  </Card>
+  <Card title="File Manager open" icon="folder-open">
+    The visual editor at your store's editor URL
+  </Card>
+</CardGroup>
+
+<Steps>
+
+<Step title="Create your store and get the storeId">
+
+If you haven't created a store yet, call the API and save the `id` from the response — every subsequent API call uses it as `{storeId}`.
+
+```bash
+curl -X POST https://api.corvex.io/api/stores \
+  -H "Content-Type: application/json" \
+  -d '{"name": "My Store", "domain": "mystore.corvex.io"}'
+```
+
+The response includes the `id` field — that is your `storeId`.
+
+</Step>
+
+<Step title="Create layout/theme.liquid">
+
+Open the File Manager in the visual editor and create the file `layout/theme.liquid`. This file is the single HTML wrapper rendered around every page on your store.
+
+```liquid
+<!DOCTYPE html>
+<html lang="{{ shop.locale | default: 'en' }}">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <title>{{ seo.title | default: shop.name }}</title>
+    <meta name="description" content="{{ seo.description | default: settings.seo_default_description }}">
+    <link rel="canonical" href="{{ seo.canonical }}">
+
+    <meta property="og:title"       content="{{ seo.og.title }}">
+    <meta property="og:description" content="{{ seo.og.description }}">
+    <meta property="og:image"       content="{{ seo.og.image }}">
+
+    {% if shop.favicon %}<link rel="icon" href="{{ shop.favicon }}">{% endif %}
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family={{ settings.font_heading | default: 'Inter' }}:wght@400;700&family={{ settings.font_body | default: 'Inter' }}:wght@400;500&display=swap"
+          rel="stylesheet">
+
+    <link rel="stylesheet" href="{{ 'theme.css' | asset_url }}">
+
+    <!-- CSS custom properties from theme settings -->
+    <style>
+      :root {
+        --color-primary:   {{ settings.color_primary   | default: '#4f46e5' }};
+        --color-secondary: {{ settings.color_secondary | default: '#8b5cf6' }};
+        --color-bg:        {{ settings.color_bg        | default: '#ffffff' }};
+        --color-text:      {{ settings.color_text      | default: '#111111' }};
+        --font-heading:    '{{ settings.font_heading   | default: 'Inter' }}', sans-serif;
+        --font-body:       '{{ settings.font_body      | default: 'Inter' }}', sans-serif;
+        --font-size-base:  {{ settings.font_size_base  | default: 16 }}px;
+        --border-radius:   {{ settings.border_radius   | default: 8  }}px;
+      }
+    </style>
+
+    <!-- Injects section CSS, meta tags, and scripts required by the engine -->
+    {{ content_for_header }}
+  </head>
+
+  <body class="page-type-{{ request.page_type }}{% if request.is_editor %} is-editor{% endif %}">
+    {% section 'header' %}
+
+    <main>
+      {{ content_for_layout }}
+    </main>
+
+    {% section 'footer' %}
+
+    <!-- Required: exposes the store ID to section JavaScript -->
+    <script>window.__STORE_ID__ = "{{ shop.id }}";</script>
+    <script src="{{ 'theme.js' | asset_url }}" defer></script>
+  </body>
+</html>
+```
+
+<Warning>
+`{{ content_for_header }}` and `{{ content_for_layout }}` are required. Removing either causes a render error and a blank page.
+</Warning>
+
+<Tip>
+`window.__STORE_ID__` is a Corvex convention — it is not injected automatically. Any section that calls the cart or recommendations API reads this value. Keep it in your `theme.liquid`.
+</Tip>
+
+</Step>
+
+<Step title="Create assets/theme.css">
+
+Create the file `assets/theme.css` with your base styles and utility classes. The `{% style %}` blocks inside individual sections add their own scoped CSS on top of this foundation.
+
+```css
+/* Minimal reset */
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; line-height: 1.6; }
+img  { max-width: 100%; display: block; }
+
+/* Container utility */
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 20px;
+}
+
+/* Default button */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 12px 24px;
+  border-radius: var(--border-radius);
+  font-family: var(--font-heading);
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+  border: none;
+  transition: opacity 0.2s;
+}
+
+.btn:hover { opacity: 0.85; }
+
+.btn--primary {
+  background-color: var(--color-primary);
+  color: #ffffff;
+}
+
+.btn--accent {
+  background-color: var(--color-accent);
+  color: #ffffff;
+}
+```
+
+</Step>
+
+<Step title="Create your first section: hero-banner">
+
+Sections live under `sections/<type>/` and require at minimum a `schema.json` and a `template.liquid`. Create the folder `sections/hero-banner/` and add these two files.
+
+<CodeGroup>
+```json schema.json
+{
+  "name": "Hero Banner",
+  "category": "promotion",
+  "settings": [
+    {
+      "type": "header",
+      "content": "Content"
+    },
+    {
+      "type": "text",
+      "id": "title",
+      "label": "Heading",
+      "default": "Welcome to our store"
+    },
+    {
+      "type": "textarea",
+      "id": "subtitle",
+      "label": "Subheading",
+      "default": "Discover our collection"
+    },
+    {
+      "type": "text",
+      "id": "button_text",
+      "label": "Button label",
+      "default": "Shop now"
+    },
+    {
+      "type": "url",
+      "id": "button_link",
+      "label": "Button URL",
+      "default": "/products"
+    },
+    {
+      "type": "header",
+      "content": "Appearance"
+    },
+    {
+      "type": "image_picker",
+      "id": "background_image",
+      "label": "Background image"
+    },
+    {
+      "type": "color",
+      "id": "background_color",
+      "label": "Background color",
+      "default": "#1a1a2e"
+    },
+    {
+      "type": "color",
+      "id": "text_color",
+      "label": "Text color",
+      "default": "#ffffff"
+    },
+    {
+      "type": "range",
+      "id": "height",
+      "label": "Height (px)",
+      "min": 300,
+      "max": 800,
+      "step": 50,
+      "default": 500,
+      "unit": "px"
+    }
+  ]
+}
+```
+
+```liquid template.liquid
+{% style %}
+  .hero-{{ section.id }} {
+    position: relative;
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+    min-height: {{ section.settings.height }}px;
+    background-color: {{ section.settings.background_color }};
+  }
+
+  .hero-{{ section.id }} .hero__bg {
+    position: absolute;
+    inset: 0;
+    background-size: cover;
+    background-position: center;
+    opacity: 0.6;
+  }
+
+  .hero-{{ section.id }} .hero__content {
+    position: relative;
+    z-index: 1;
+    padding: 60px 0;
+  }
+
+  .hero-{{ section.id }} .hero__title {
+    font-family: var(--font-heading);
+    font-size: clamp(2rem, 5vw, 4rem);
+    margin: 0 0 16px;
+    line-height: 1.2;
+  }
+
+  .hero-{{ section.id }} .hero__subtitle {
+    font-size: 1.25rem;
+    margin: 0 0 32px;
+    opacity: 0.85;
+  }
+{% endstyle %}
+
+<section class="hero hero-{{ section.id }}"
+         data-section-type="{{ section.type }}"
+         data-section-id="{{ section.id }}">
+
+  {% if section.settings.background_image != blank %}
+    <div class="hero__bg"
+         style="background-image: url('{{ section.settings.background_image | img_url: '1400x' }}')">
+    </div>
+  {% endif %}
+
+  <div class="container hero__content">
+    {% if section.settings.title != blank %}
+      <h1 class="hero__title" style="color: {{ section.settings.text_color }}">
+        {{ section.settings.title }}
+      </h1>
+    {% endif %}
+
+    {% if section.settings.subtitle != blank %}
+      <p class="hero__subtitle" style="color: {{ section.settings.text_color }}">
+        {{ section.settings.subtitle }}
+      </p>
+    {% endif %}
+
+    {% if section.settings.button_text != blank %}
+      <a href="{{ section.settings.button_link }}" class="btn btn--accent">
+        {{ section.settings.button_text }}
+      </a>
+    {% endif %}
+  </div>
+
+</section>
+```
+</CodeGroup>
+
+<Note>
+Every section root element **must** include `data-section-type` and `data-section-id`. Without them the editor cannot select the section, and the JavaScript registry cannot initialize lifecycle hooks.
+</Note>
+
+</Step>
+
+<Step title="Create a page and add the section">
+
+Create your home page and attach the `hero-banner` section to it via the API, or drag it in from the editor's section panel.
+
+```bash
+# Create the home page
+curl -X POST https://api.corvex.io/api/stores/{storeId}/pages \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Home", "handle": "index"}'
+
+# Add the hero-banner section
+curl -X POST https://api.corvex.io/api/stores/{storeId}/pages/{pageId}/sections \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "hero-banner",
+    "settings": {
+      "title": "Welcome to My Store",
+      "subtitle": "Discover our collection",
+      "button_text": "Shop products",
+      "button_link": "/products"
+    },
+    "order": 0
+  }'
+```
+
+</Step>
+
+<Step title="Preview and edit in the visual editor">
+
+Open the editor and use the drag-and-drop panel to select your `hero-banner` section. Edit settings in the right sidebar — the preview iframe updates in real time.
+
+The `hero-banner` section appears in the section list as soon as the files exist in the File Manager. You do not need to restart anything.
+
+</Step>
+
+<Step title="Publish your theme">
+
+When you are satisfied with the result, publish the store. Publishing triggers a full pre-render of all static pages and saves the HTML to cache, so subsequent visitors receive a response in ~50 ms instead of waiting for a live render.
+
+```bash
+curl -X POST https://api.corvex.io/api/stores/{storeId}/publish \
+  -H "Content-Type: application/json" \
+  -d '{"description": "First theme version"}'
+```
+
+Alternatively, click **Publish** in the visual editor toolbar.
+
+<Tip>
+Verify that pre-render is active by checking the response header: `curl -I https://yourstore.corvex.io/ | grep X-Cache-Status`. A value of `PRE_RENDERED` confirms it worked.
+</Tip>
+
+</Step>
+
+</Steps>
+
+## What to build next
+
+<CardGroup cols={2}>
+  <Card title="Create a Custom Section" icon="puzzle-piece" href="/guides/create-section">
+    Add blocks, interactivity, and JavaScript to your sections
+  </Card>
+  <Card title="Copy-Paste Templates" icon="copy" href="/guides/templates">
+    Ready-made boilerplates for common section types
+  </Card>
+  <Card title="Anti-Patterns to Avoid" icon="triangle-exclamation" href="/guides/anti-patterns">
+    Common mistakes that cause subtle bugs in themes
+  </Card>
+  <Card title="Performance Overview" icon="gauge-high" href="/performance/overview">
+    How to write sections that load fast
+  </Card>
+</CardGroup>

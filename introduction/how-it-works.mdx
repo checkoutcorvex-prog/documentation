@@ -1,0 +1,125 @@
+---
+title: "How Corvex Store renders and publishes pages"
+description: "Learn how Corvex Store handles the request-to-HTML pipeline, the draft/publish model, immutable versioning, and real-time editor preview via WebSocket."
+---
+
+Corvex Store separates editing from publishing. When you work in the editor, you're editing a **draft** — a private version of your store. When your visitors browse your store, they see the **published** version. The two states are completely independent, which means you can iterate freely without affecting live traffic until you're ready to publish.
+
+## Draft vs published
+
+| | Draft | Published |
+|---|---|---|
+| **Who sees it** | Only you, in the editor | All visitors |
+| **When it updates** | On every save | Only when you click Publish |
+| **Cache TTL** | 5 seconds | 30 days |
+| **Pre-rendered HTML** | No | Yes (cached in Redis for 7 days) |
+
+## How publishing works
+
+When you click **Publish** in the editor, Corvex runs through these steps in under one second:
+
+```
+You edit in the editor
+        ↓
+Changes saved to draft
+        ↓
+Preview updates via WebSocket (~100ms)
+        ↓
+You click Publish
+        ↓
+Immutable snapshot created → version pointer updated → caches invalidated
+        ↓
+Visitors see the new version (~1s total latency)
+```
+
+Publishing creates an **immutable snapshot** — a frozen copy of your theme at that point in time. The system then updates a version pointer (`current.json`) to reference the new snapshot. The pointer update is what makes publishing feel instant.
+
+```
+versions/
+├── v_1775454381604_abc   ← snapshot from Jan 10
+├── v_1775454960302_def   ← snapshot from Jan 15
+└── v_1775455847261_ghi   ← current (pointer targets this one)
+```
+
+**Rolling back** works the same way: point `current.json` at an older snapshot. No file restores, no downtime.
+
+## The rendering pipeline
+
+When a visitor requests a published page, Corvex works through a cache hierarchy before doing any rendering:
+
+```
+1. Request arrives at the backend
+2. Check L1 cache (in-memory, ~1ms)
+3. Check L2 cache (Redis, ~10ms)
+4. Check pre-render cache (Redis, ~50ms)
+5. Full render on cache miss (~2,000ms)
+   ├── Load pages and sections from the database
+   ├── Fetch and normalize data (products, categories)
+   ├── Render sections in parallel with LiquidJS
+   ├── Assemble final HTML with theme.liquid
+   └── Save result to cache
+6. Return HTML to the visitor
+```
+
+The response header `X-Cache-Status` tells you where the response came from:
+
+| Value | Source |
+|---|---|
+| `HIT` | In-memory cache |
+| `REDIS_HIT` | Redis L2 cache |
+| `PRE_RENDERED` | Pre-rendered HTML cache |
+| `MISS` | Full render (slowest path) |
+
+<Tip>
+Pre-rendered HTML is the fastest path. Publishing triggers a background pre-render of all static pages so your visitors almost never hit the `MISS` path.
+</Tip>
+
+## Real-time editor preview
+
+The editor uses a WebSocket connection (Socket.IO) to update the preview iframe without a page reload. Every settings change you make triggers a delta event:
+
+```javascript
+// Editor sends:
+socket.emit('preview-delta', {
+  storeId: 'uuid',
+  sectionId: 'uuid',
+  sectionType: 'hero-banner',
+  settings: { title: 'New heading' }
+});
+
+// Backend responds:
+socket.on('preview-update', (payload) => {
+  // payload.html — updated HTML for the section
+  // payload.sectionId — which section to swap in the iframe
+});
+```
+
+The preview **bypasses all caches** — every delta event triggers a full re-render of the affected section so you always see the current state.
+
+## Store isolation
+
+Every store runs in its own isolated context:
+
+- A dedicated LiquidJS engine instance (pool of up to 100 active engines).
+- A separate cache namespace keyed by `storeId`.
+- Isolated asset storage per store.
+- Custom domain resolved by DNS to `storeId`.
+
+If more than 100 stores are active simultaneously, the least recently used engine is evicted from the pool and recreated on the next request.
+
+---
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" href="/introduction/quickstart">
+    Get your local environment running and see this pipeline in action.
+  </Card>
+  <Card title="Key concepts" href="/introduction/concepts">
+    Review draft, published, sections, and other core vocabulary.
+  </Card>
+  <Card title="API reference" href="/api/overview">
+    REST endpoints for stores, pages, and publishing.
+  </Card>
+  <Card title="WebSocket events" href="/api/websocket">
+    Full reference for real-time preview events.
+  </Card>
+</CardGroup>

@@ -1,0 +1,457 @@
+---
+title: "Product object: full Liquid reference for theme developers"
+description: "Complete reference for the product Liquid object in Corvex Store: fields, pricing, images, variants, options, and full product card examples."
+---
+
+The `product` object is the most-used dynamic object in Corvex Store templates. It is automatically injected into your Liquid context on product pages and in any section that requests product data. This page documents every field on the `product` object — including variants, options, and product-type-specific fields — with practical Liquid examples throughout.
+
+## Root fields
+
+```typescript
+interface Product {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string;
+  shortDescription?: string;
+  status: string;              // "ACTIVE" | "DRAFT" | "ARCHIVED"
+  featured: boolean;
+  stock?: number;              // aggregate stock across all variants
+  availableForSale?: boolean;  // true if stock > 0 and status === "ACTIVE"
+  pricing?: ProductPricing;
+  images?: ProductImage[];
+  variants?: ProductVariant[];
+  options?: ProductOption[];
+  variantCount?: number;
+  categories?: Array<{ id: string; name: string; slug: string }>;
+  createdAt?: string;
+  updatedAt?: string;
+
+  // Shopify-like mirror fields for convenience
+  price?: number;              // mirrors pricing.price
+  compare_at_price?: number;   // mirrors pricing.compareAtPrice
+  image?: string;              // mirrors images[0].url
+  url?: string;                // "/products/{slug}"
+}
+```
+
+**Basic access:**
+
+```liquid
+{{ product.id }}
+{{ product.name }}
+{{ product.slug }}
+{{ product.description }}
+{{ product.shortDescription }}
+
+{{ product.status }}           <!-- "ACTIVE" -->
+{{ product.featured }}         <!-- true or false -->
+{{ product.stock }}
+{{ product.availableForSale }}
+
+{{ product.createdAt }}        <!-- ISO 8601 timestamp -->
+```
+
+## `product.pricing`
+
+```typescript
+interface ProductPricing {
+  price: number;                    // regular price
+  discountedPrice?: number | null;  // sale price (if active)
+  compareAtPrice?: number | null;   // legacy — mirrors discountedPrice
+  currency?: string;                // e.g. "USD"
+}
+```
+
+**Display price with optional sale price:**
+
+```liquid
+{% if product.pricing.discountedPrice %}
+  <span class="price">{{ product.pricing.discountedPrice | money }}</span>
+  <del>{{ product.pricing.price | money }}</del>
+{% else %}
+  <span class="price">{{ product.pricing.price | money }}</span>
+{% endif %}
+```
+
+**Calculate and display a discount percentage badge:**
+
+```liquid
+{% if product.pricing.discountedPrice %}
+  {% assign saving = product.pricing.price | minus: product.pricing.discountedPrice %}
+  {% assign pct = saving | times: 100.0 | divided_by: product.pricing.price | round %}
+  <span class="badge">-{{ pct }}%</span>
+{% endif %}
+```
+
+**Shopify-like mirror fields (alternative syntax):**
+
+```liquid
+<span>{{ product.price | money }}</span>
+{% if product.compare_at_price %}
+  <del>{{ product.compare_at_price | money }}</del>
+{% endif %}
+```
+
+<Info>
+`product.price` and `product.compare_at_price` are convenience mirrors. In new templates, prefer `product.pricing.price` and `product.pricing.discountedPrice` for explicitness.
+</Info>
+
+## `product.images`
+
+```typescript
+interface ProductImage {
+  url: string;
+  position: number;   // 1-indexed; position 1 is the featured image
+  alt?: string;
+  // Legacy fields (still populated for compatibility)
+  type?: string;
+  isFeatured?: boolean;
+}
+```
+
+**Render all images:**
+
+```liquid
+{% for image in product.images %}
+  <img src="{{ image.url | img_url: '600x' }}"
+       alt="{{ image.alt | default: product.name }}"
+       loading="lazy">
+{% endfor %}
+```
+
+**Render the cover image:**
+
+```liquid
+{% if product.images.size > 0 %}
+  <img src="{{ product.images[0].url | img_url: '800x' }}"
+       alt="{{ product.name }}">
+{% else %}
+  <img src="{{ 'product-placeholder.png' | repo_asset_url }}"
+       alt="{{ product.name }}">
+{% endif %}
+```
+
+**Legacy `product.media.images` (still works):**
+
+```liquid
+{% for image in product.media.images %}
+  <img src="{{ image.url | img_url: '600x' }}">
+{% endfor %}
+```
+
+## Variants and options
+
+Variants represent individual SKUs (for example, "Black / M", "White / L"). Options are the dimensions along which a product varies ("Color", "Size").
+
+### `product.variants`
+
+```typescript
+interface ProductVariant {
+  id: string;
+  title?: string;                             // "Black / M"
+  sku?: string;
+  barcode?: string;
+  price?: number;
+  discountedPrice?: number | null;
+  stock?: number;
+  availableForSale?: boolean;
+  weight?: number;
+  weightUnit?: string;
+  position?: number;
+  isActive?: boolean;
+  image?: string | null;
+  selectedOptions?: Record<string, string>;   // { "Color": "Black", "Size": "M" }
+
+  // Legacy compatibility fields
+  inventoryQuantity?: number;                 // mirrors stock
+  compare_at_price?: number;                  // mirrors discountedPrice
+}
+```
+
+**Render a simple variant dropdown:**
+
+```liquid
+<select name="variant" data-ref="variant-select">
+  {% for variant in product.variants %}
+    <option value="{{ variant.id }}"
+            data-price="{{ variant.price }}"
+            data-discounted-price="{{ variant.discountedPrice }}"
+            data-stock="{{ variant.stock }}"
+            {% if variant.availableForSale == false %}disabled{% endif %}>
+      {{ variant.title }} — {{ variant.price | money }}
+      {% if variant.availableForSale == false %} (out of stock){% endif %}
+    </option>
+  {% endfor %}
+</select>
+```
+
+**Products without variants:**
+
+```liquid
+{% if product.variants.size <= 1 %}
+  <button data-action="add-to-cart"
+          data-product-id="{{ product.id }}"
+          data-variant-id="{{ product.variants[0].id }}">
+    Add to cart — {{ product.pricing.price | money }}
+  </button>
+{% else %}
+  <!-- show variant selector -->
+{% endif %}
+```
+
+### `product.options`
+
+```typescript
+interface ProductOption {
+  name: string;       // "Color" | "Size" | ...
+  values: string[];   // ["Black", "White", "Blue"]
+}
+```
+
+**Render option buttons (Shopify-like):**
+
+```liquid
+{% for option in product.options %}
+  <fieldset class="option-group" data-option="{{ option.name }}">
+    <legend>{{ option.name }}:</legend>
+
+    {% for value in option.values %}
+      <label class="option-label">
+        <input type="radio"
+               name="option-{{ option.name | handleize }}"
+               value="{{ value }}"
+               data-action="select-option"
+               data-option-name="{{ option.name }}"
+               data-option-value="{{ value }}">
+        <span>{{ value }}</span>
+      </label>
+    {% endfor %}
+  </fieldset>
+{% endfor %}
+```
+
+When the customer selects options, your section's JavaScript finds the matching variant by comparing `selectedOptions` on each variant object:
+
+```typescript
+const match = variants.find(v =>
+  Object.entries(selected).every(
+    ([name, value]) => v.selectedOptions[name] === value
+  )
+);
+```
+
+### Pass variant data to the section script
+
+Embed the variants as JSON in a `data-` attribute so your script can read them without a separate API call:
+
+```liquid
+<section data-section-type="product-form"
+         data-section-id="{{ section.id }}"
+         data-product-id="{{ product.id }}"
+         data-variants='{{ product.variants | json }}'>
+  <!-- option selectors rendered here -->
+  <p>Price: <span data-ref="price">{{ product.pricing.price | money }}</span></p>
+  <p data-ref="stock">{{ product.stock }} in stock</p>
+
+  <button data-ref="add-btn"
+          data-action="add-to-cart"
+          data-variant-id="{{ product.variants[0].id }}">
+    Add to cart
+  </button>
+</section>
+```
+
+### Variant-specific images
+
+Some variants have their own image (for example, a photo per color). Fall back to the product's first image if a variant has none:
+
+```liquid
+{% if variant.image %}
+  <img src="{{ variant.image | img_url: '800x' }}"
+       alt="{{ variant.title }}">
+{% else %}
+  <img src="{{ product.images[0].url | img_url: '800x' }}"
+       alt="{{ product.name }}">
+{% endif %}
+```
+
+### Stock: product-level vs variant-level
+
+| Field | Meaning |
+|---|---|
+| `product.stock` | Sum of `stock` across all active variants |
+| `product.availableForSale` | `true` if any variant has stock |
+| `variant.stock` | Stock for that specific SKU |
+| `variant.availableForSale` | `true` if that variant has stock |
+
+```liquid
+{% if product.availableForSale %}
+  In stock
+{% else %}
+  Out of stock in all options
+{% endif %}
+```
+
+<Warning>
+Always use `variant.selectedOptions` (not the legacy `variant.variantValues`) in new templates. The DataProvider normalizes both, but `selectedOptions` is the canonical field going forward.
+</Warning>
+
+## `product.categories`
+
+The categories a product belongs to:
+
+```liquid
+{% for cat in product.categories %}
+  <a href="/categories/{{ cat.slug }}" class="tag">{{ cat.name }}</a>
+{% endfor %}
+```
+
+## Product type fields
+
+### Physical products
+
+```liquid
+{% if product.physical %}
+  <p>Weight: {{ product.physical.weight }}{{ product.physical.weightUnit }}</p>
+  <p>Dimensions:
+    {{ product.physical.dimensions.length }} ×
+    {{ product.physical.dimensions.width }} ×
+    {{ product.physical.dimensions.height }}
+    {{ product.physical.dimensions.unit }}
+  </p>
+{% endif %}
+```
+
+The `physical` object includes:
+
+```typescript
+{
+  weight: number;       // e.g. 250 (grams by default)
+  weightUnit: string;   // "g" | "kg" | "lb" | "oz"
+  dimensions: {
+    length: number;
+    width: number;
+    height: number;
+    unit: string;       // "cm" | "in"
+  };
+  stock: {
+    quantity: number;
+    trackInventory: boolean;
+    allowOutOfStock: boolean;
+  };
+}
+```
+
+### Digital products
+
+The `digital` object provides download metadata for digital products:
+
+```typescript
+{
+  fileUrl: string;
+  fileSize: number;       // bytes
+  fileType: string;       // "pdf" | "zip" | ...
+  downloadLimit: number;
+  expirationDays: number;
+}
+```
+
+### Membership / subscriptions
+
+The `membership` object describes recurring access products:
+
+```typescript
+{
+  duration: number;
+  durationUnit: string;   // "month" | "year" | ...
+  recurring: boolean;
+  benefits: string[];
+}
+```
+
+## Product URL
+
+```liquid
+<a href="{{ product.url }}">{{ product.name }}</a>
+
+<!-- Equivalent to: -->
+<a href="/products/{{ product.slug }}">{{ product.name }}</a>
+```
+
+`product.url` is generated automatically. If your theme uses a different routing prefix, use `product.slug` directly and construct the path yourself.
+
+## Complete product card example
+
+```liquid
+<article class="product-card" data-product-id="{{ product.id }}">
+  <a href="{{ product.url }}" class="product-card__link">
+    {% if product.images.size > 0 %}
+      <img src="{{ product.images[0].url | img_url: '400x400' }}"
+           alt="{{ product.name }}"
+           loading="lazy">
+    {% else %}
+      <img src="{{ 'product-placeholder.png' | repo_asset_url }}"
+           alt="{{ product.name }}">
+    {% endif %}
+
+    <h3 class="product-card__title">{{ product.name }}</h3>
+
+    <div class="product-card__pricing">
+      {% if product.pricing.discountedPrice %}
+        <span class="price">{{ product.pricing.discountedPrice | money }}</span>
+        <del>{{ product.pricing.price | money }}</del>
+      {% else %}
+        <span class="price">{{ product.pricing.price | money }}</span>
+      {% endif %}
+    </div>
+
+    {% if product.availableForSale == false %}
+      <span class="badge badge--sold-out">Out of stock</span>
+    {% endif %}
+
+    {% if product.featured %}
+      <span class="badge badge--featured">Featured</span>
+    {% endif %}
+  </a>
+</article>
+```
+
+## How the product object is populated
+
+<AccordionGroup>
+  <Accordion title="On a product page (/products/:slug)">
+    The backend identifies the route, calls `DataProvider.getProduct(slug)`, and injects the result as `product` into the Liquid context before rendering.
+  </Accordion>
+  <Accordion title="In a products loop ({% for product in products %})">
+    When the context builder detects a section that needs products (such as `product-grid`), it calls `DataProvider.getProducts({ limit })` once. All sections on that page share the same `products` array.
+  </Accordion>
+  <Accordion title="In a product_list section setting">
+    When a merchant selects products manually via a `product_list` setting, the backend expands the stored IDs into full product objects before the template renders. You access them as `section.settings.featured_products`.
+  </Accordion>
+  <Accordion title="Inside collection.products">
+    On a `/collections/:slug` page, the backend fetches the collection's products and exposes them as `collection.products`. Each item has the same shape as the standalone `product` object.
+  </Accordion>
+</AccordionGroup>
+
+## Debugging
+
+To inspect the product context during development, expose it via a script tag in your template:
+
+```liquid
+<script>window.__PRODUCT__ = {{ product | json }};</script>
+```
+
+Then in your browser console:
+
+```javascript
+console.log(window.__PRODUCT__);
+```
+
+You can also request the full Liquid context as JSON by appending `?debug=json` to a product URL in development:
+
+```
+GET /api/stores/:storeId/full-page/products/essential-tee?debug=json
+```
+
+See [Common issues](/debug/common-issues) for more debugging techniques.

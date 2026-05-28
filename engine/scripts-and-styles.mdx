@@ -1,0 +1,283 @@
+---
+title: "CSS and JavaScript in Corvex sections"
+description: "How to add CSS and JavaScript to Liquid section templates using style and script tags, when each approach is appropriate, and how Corvex processes them."
+---
+
+Corvex Store gives you two ways to embed CSS and JavaScript in a section template: standard HTML `<style>` and `<script>` tags, or the Liquid-style `{% style %}` and `{% javascript %}` tags. Both approaches support Liquid output interpolation, but they differ in how reliably the DOM exists when your code runs. Understanding that difference prevents a common class of hard-to-debug errors.
+
+## Quick comparison
+
+| | `<style>` / `<script>` | `{% style %}` / `{% javascript %}` |
+|---|---|---|
+| Liquid `{{ }}` interpolation | Yes | Yes |
+| CSS moved to `<head>` | Automatically | Automatically |
+| DOM availability for scripts | Guaranteed when element is above the script | Not guaranteed — wrap in `DOMContentLoaded` |
+| Best for | Complex styles, interactive scripts | Simple styles with settings variables, small self-contained scripts |
+
+---
+
+## Adding CSS to a section
+
+Both `<style>` and `{% style %}` produce identical output — Corvex automatically extracts the CSS block from the rendered HTML and injects it into the `<head>`. You choose based on preference and complexity.
+
+### Using `<style>`
+
+Write a standard HTML style element anywhere in your template. Liquid interpolation works inside it:
+
+```liquid
+<style>
+  .hero-{{ section.id }} {
+    background-color: {{ section.settings.bg_color | default: '#000' }};
+    min-height: {{ section.settings.height | default: 500 }}px;
+    color: {{ section.settings.text_color | default: '#fff' }};
+  }
+
+  @media (max-width: 768px) {
+    .hero-{{ section.id }} {
+      min-height: {{ section.settings.height_mobile | default: 300 }}px;
+    }
+  }
+</style>
+```
+
+### Using `{% style %}`
+
+The Liquid tag form is functionally equivalent. It follows the Shopify theme convention and is preferred in themes designed for portability:
+
+```liquid
+{% style %}
+  .banner-{{ section.id }} {
+    background: {{ section.settings.bg_color | default: '#1a1a1a' }};
+    padding: {{ section.settings.padding | default: 60 }}px 0;
+  }
+
+  @media (max-width: 768px) {
+    .banner-{{ section.id }} {
+      padding: 30px 0;
+    }
+  }
+{% endstyle %}
+```
+
+<Info>
+The `<style>` block is extracted from the body and moved to the `<head>` automatically. You do not need to place it in a layout file — write it directly in the section template.
+</Info>
+
+<Tip>
+Use `<style>` for larger stylesheets with many rules — most editors apply CSS syntax highlighting to `<style>` blocks but not to `{% style %}` blocks. Use `{% style %}` for short sections or when following Shopify theme conventions matters.
+</Tip>
+
+### Scope your selectors with `section.id`
+
+Every section instance on a page has a unique `section.id`. Always include it in your selectors to prevent one instance of a section from affecting another:
+
+```liquid
+{# ❌ Affects every .card element on the page #}
+<style>
+  .card { background: {{ section.settings.card_bg }}; }
+</style>
+
+{# ✅ Scoped to this section instance only #}
+<style>
+  .card-{{ section.id }} { background: {{ section.settings.card_bg }}; }
+</style>
+```
+
+---
+
+## Adding JavaScript to a section
+
+This is where the two approaches differ in a meaningful way.
+
+### Using `<script>` — recommended for interactive logic
+
+A `<script>` tag placed **after** the elements it targets runs synchronously, so the DOM is already built when your code executes. You do not need `DOMContentLoaded`:
+
+```liquid
+<div id="counter-{{ section.id }}">
+  <button id="btn-plus-{{ section.id }}">+</button>
+  <span id="value-{{ section.id }}">0</span>
+  <button id="btn-minus-{{ section.id }}">−</button>
+</div>
+
+{# Script is AFTER the elements — DOM is ready #}
+<script>
+  (function() {
+    'use strict';
+    var count = 0;
+    var span = document.getElementById('value-{{ section.id }}');
+
+    document.getElementById('btn-plus-{{ section.id }}')
+      .addEventListener('click', function() { span.textContent = ++count; });
+
+    document.getElementById('btn-minus-{{ section.id }}')
+      .addEventListener('click', function() { if (count > 0) span.textContent = --count; });
+  })();
+</script>
+```
+
+### Using `{% javascript %}` — for small self-contained scripts
+
+The `{% javascript %}` tag inserts its content inline in the body. The DOM may or may not exist at execution time, so always wrap DOM access in `DOMContentLoaded`:
+
+```liquid
+{% javascript %}
+  document.addEventListener('DOMContentLoaded', function() {
+    var autoplay = {{ section.settings.autoplay_speed | default: 5 }};
+    var container = document.getElementById('slider-{{ section.id }}');
+
+    if (container && autoplay > 0) {
+      setInterval(function() {
+        // slider advance logic
+      }, autoplay * 1000);
+    }
+  });
+{% endjavascript %}
+```
+
+<Warning>
+Never access the DOM directly inside `{% javascript %}` without `DOMContentLoaded`. The element you query may not exist yet when the script runs, causing a `null` reference error that only appears in certain page load conditions.
+
+```liquid
+{# ❌ Breaks when the script runs before the DOM is ready #}
+{% javascript %}
+  document.getElementById('btn').addEventListener('click', fn); // null!
+{% endjavascript %}
+```
+</Warning>
+
+---
+
+## Which tag to use
+
+<AccordionGroup>
+  <Accordion title="Use &lt;style&gt; when...">
+    - Your CSS has more than about 20 rules
+    - You need `@keyframes`, `:root` custom properties, complex pseudo-selectors, or many media queries
+    - You want syntax highlighting and editor support for the CSS content
+  </Accordion>
+  <Accordion title="Use {% style %} when...">
+    - The section is simple and the CSS block is short
+    - You are following Shopify theme conventions for portability
+    - Most rules reference `section.settings` variables
+  </Accordion>
+  <Accordion title="Use &lt;script&gt; when...">
+    - Your script is more than about 30 lines
+    - The script depends on globals defined by other scripts (`window.formatPrice`, `window.cart`, and so on)
+    - You need predictable execution order relative to other scripts
+    - You are implementing cart logic, modal behavior, zoom, variant selection, or any other user interaction
+    - You can place the `<script>` tag after the elements it manipulates
+  </Accordion>
+  <Accordion title="Use {% javascript %} when...">
+    - The script is small and self-contained (for example, setting a timer or initializing a single variable)
+    - The script does not depend on other scripts
+    - You always wrap DOM access in `DOMContentLoaded`
+    - You are following Shopify theme conventions
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Recommended section structure
+
+Follow this order to keep your section templates consistent and avoid timing issues:
+
+```liquid
+{% comment %} 1. CSS first — moved to <head> automatically {% endcomment %}
+{% style %}
+  .my-section-{{ section.id }} {
+    background: {{ section.settings.bg | default: '#fff' }};
+    padding: {{ section.settings.padding | default: 40 }}px 20px;
+  }
+{% endstyle %}
+
+{% comment %} 2. Section HTML {% endcomment %}
+<div class="my-section-{{ section.id }}">
+  <h2 id="title-{{ section.id }}">{{ section.settings.title }}</h2>
+  <button id="btn-{{ section.id }}" type="button">
+    {{ section.settings.button_text | default: 'Click here' }}
+  </button>
+</div>
+
+{% comment %} 3. Script last — DOM already exists above {% endcomment %}
+<script>
+  (function() {
+    'use strict';
+    var btn = document.getElementById('btn-{{ section.id }}');
+    if (!btn) return;
+
+    btn.addEventListener('click', function() {
+      console.log('Clicked:', '{{ section.settings.title }}');
+    });
+  })();
+</script>
+
+{% comment %} 4. Schema last — produces no output {% endcomment %}
+{% schema %}
+{
+  "name": "My Section",
+  "settings": [
+    { "type": "text",   "id": "title",       "label": "Title",       "default": "Hello" },
+    { "type": "text",   "id": "button_text", "label": "Button",      "default": "Click" },
+    { "type": "color",  "id": "bg",          "label": "Background",  "default": "#ffffff" },
+    { "type": "number", "id": "padding",     "label": "Padding",     "default": 40 }
+  ]
+}
+{% endschema %}
+```
+
+<Info>
+Placing the `<script>` after the section's HTML means the elements already exist in the DOM when the script runs — no `DOMContentLoaded` wrapper needed.
+</Info>
+
+---
+
+## Loading theme-level assets
+
+For scripts and stylesheets that are shared across all sections — such as a utility library or base theme stylesheet — load them from the layout file using `asset_url`:
+
+```liquid
+{# theme.liquid #}
+<head>
+  {# Critical scripts needed for inline onclick handlers — load synchronously #}
+  <script src="{{ 'header-critical.js' | asset_url }}"></script>
+</head>
+
+<body>
+  {{ content_for_layout }}
+
+  {# Non-critical utilities — load after body content #}
+  <script src="{{ 'theme.js' | asset_url }}" defer></script>
+</body>
+```
+
+### When to use `defer`
+
+| Script type | Use `defer`? | Reason |
+|---|---|---|
+| Utility functions referenced by `onclick` attributes | No | `defer` delays execution until after `DOMContentLoaded`; `onclick` can fire before that |
+| Analytics and tracking | Yes | Non-blocking; does not affect visible rendering |
+| Heavy feature scripts (carousel, modal) | Yes | Defer to improve First Contentful Paint |
+
+<Warning>
+Do not add `defer` to any script that defines functions called by `onclick` attributes in your HTML. The browser parses `onclick` immediately but the deferred script has not yet run, causing a `ReferenceError` if the user clicks quickly.
+</Warning>
+
+---
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="Tags reference" icon="tag" href="/engine/tags">
+    Full syntax for `{% style %}`, `{% javascript %}`, and all other Corvex custom tags.
+  </Card>
+  <Card title="Liquid overview" icon="book" href="/engine/liquid">
+    Core Liquid syntax for using `{{ }}` interpolation inside style and script blocks.
+  </Card>
+  <Card title="Section anatomy" icon="layout-grid" href="/sections/anatomy">
+    How a complete section file is structured, including schema and lifecycle.
+  </Card>
+  <Card title="Theme assets" icon="folder" href="/themes/assets">
+    How to upload and reference CSS and JS files with `asset_url`.
+  </Card>
+</CardGroup>

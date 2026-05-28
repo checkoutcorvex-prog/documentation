@@ -1,0 +1,271 @@
+---
+title: "Built-in Section Library: Ready-to-Use Corvex Sections"
+description: "Built-in sections that ship with Corvex Store — header-pro, product-details, slideshow, cart-details, and more — with settings, actions, and extension patterns."
+---
+
+Corvex Store ships a set of high-quality, thoroughly tested sections that cover the most common storefront needs. You can use them as-is, duplicate them as a starting point for customization, or override them entirely with your own implementation.
+
+All built-in sections live in `packages/render-backend/component-library/<type>/`.
+
+## Overview
+
+| Section type | Primary use | JS bundle |
+|---|---|---|
+| `header-pro` | Full header with menu, search, cart, and mobile nav | Yes |
+| `product-details` | Product page: gallery, variants, add-to-cart, tabs | Yes |
+| `product-grid` | Product grid with filters and quick-add | Yes |
+| `slideshow` | Banner carousel with autoplay, arrows, dots | Yes |
+| `cart-details` | Full cart page | Yes |
+| `collection-list` | Collection listing in grid / carousel / featured layout | Yes |
+| `hero-banner` | Simple hero banner with CTA | No |
+| `image-text` | Image and text side by side | No |
+| `video-banner` | Banner with embedded video | No |
+| `newsletter` | Email capture form | No |
+
+<Info>
+Sections with a JS bundle use `CorvexSections` for interactivity. The others are static — rendered entirely in Liquid with no client-side lifecycle.
+</Info>
+
+## `header-pro`
+
+A full-featured store header designed for modern storefronts.
+
+**Features**
+
+- Horizontal menu on desktop, hamburger menu on mobile.
+- Search bar with autocomplete suggestions.
+- Mini-cart drawer (slide-in from the side).
+- Optional dark mode toggle.
+- Fullscreen mobile menu.
+- Overlay when menu or cart is open.
+
+**Available `data-action` values**
+
+```liquid
+<button data-action="toggle-mobile-nav">Menu</button>
+<button data-action="toggle-cart">Cart</button>
+<button data-action="toggle-search">Search</button>
+<button data-action="close-all">Close</button>
+```
+
+**Key settings**
+
+| Setting | Type | Description |
+|---|---|---|
+| `logo_image` | `image_picker` | Store logo. |
+| `menu_items` | `link_list` | Navigation links. |
+| `show_search` | `checkbox` | Show or hide the search bar. |
+| `show_cart` | `checkbox` | Show or hide the cart icon. |
+| `sticky` | `checkbox` | Fix the header at the top while scrolling. |
+| `transparent_on_top` | `checkbox` | Transparent until the user scrolls. |
+
+See the full schema in `component-library/header-pro/schema.json`.
+
+## `product-details`
+
+The complete product page with reactive variant state.
+
+**Features**
+
+- Image gallery with thumbnails and zoom.
+- Variant selector (size, color) that updates price and stock in real time.
+- Add-to-cart with visual confirmation.
+- Shipping calculator (postal code).
+- Share buttons (WhatsApp, Facebook, copy link).
+- Description, specifications, and reviews tabs.
+- Related products injected via `DataProvider`.
+
+**Data requirements**
+
+Expects the `product` variable in the Liquid context with the full structure documented in [Product data](/data/product).
+
+**Available `data-action` values**
+
+```
+add-to-cart               quantity-increase
+add-to-wishlist           quantity-decrease
+open-gallery-image        calculate-shipping
+select-variant            toggle-tab
+share-whatsapp
+```
+
+**Key settings**
+
+| Setting | Type | Description |
+|---|---|---|
+| `show_compare_price` | `checkbox` | Show "was / now" pricing. |
+| `show_variants_inline` | `checkbox` | Render variants as buttons instead of a dropdown. |
+| `enable_zoom` | `checkbox` | Zoom on image hover. |
+| `show_shipping_calculator` | `checkbox` | Show the shipping estimator. |
+| `related_products_count` | `number` | How many related products to display. |
+
+## `product-grid`
+
+A configurable product grid with multiple layout modes.
+
+**Features**
+
+- Four layouts: `grid`, `carousel`, `scrollable`, `masonry`.
+- Sidebar filters (price, category, availability).
+- Quick-add (add to cart without navigating to the product page).
+- Inline wishlist.
+- Lazy-loaded images.
+- Pagination or infinite scroll.
+
+**Product sources**
+
+Configure the `source` setting to control where products come from:
+
+| Value | Description |
+|---|---|
+| `"all"` | All active products. |
+| `"collection"` | Products from a specific collection. |
+| `"featured"` | Products marked as featured. |
+| `"manual"` | A manually selected list via the `product_list` setting. |
+
+## `slideshow`
+
+A banner carousel with smooth transitions.
+
+**Features**
+
+- Up to five slides via `slide` blocks.
+- Configurable autoplay (speed, loop, pause on hover).
+- Optional arrows and dot indicators.
+- Fade or horizontal slide transitions.
+- Embedded video slides (autoplay, mute, loop).
+- Video sync when switching slides.
+
+**Available `data-action` values**
+
+```
+prev-slide
+next-slide
+go-to-slide  (with data-slide-index="N")
+```
+
+**Slide block schema**
+
+```json
+{
+  "type": "slide",
+  "settings": [
+    { "type": "image_picker", "id": "image",       "label": "Image" },
+    { "type": "url",          "id": "video",       "label": "Video URL (MP4)" },
+    { "type": "text",         "id": "title",       "label": "Title" },
+    { "type": "textarea",     "id": "description", "label": "Description" },
+    { "type": "text",         "id": "button_text", "label": "Button text" },
+    { "type": "url",          "id": "button_link", "label": "Button link" }
+  ]
+}
+```
+
+## `cart-details`
+
+The full `/cart` page. Renders static HTML placeholders and populates them dynamically via JavaScript.
+
+**Flow**
+
+1. Backend renders HTML with placeholder content (e.g., "Loading cart…").
+2. The JS bundle reads the cart state from `localStorage` or `/api/cart`.
+3. JavaScript populates each line item, the total, and quantity controls.
+4. Updates occur in real time as the shopper changes quantities.
+
+<Warning>
+The cart page is **never pre-rendered** (it is on the excluded-pages list). This prevents leaking one shopper's cart state to another.
+</Warning>
+
+**Available `data-action` values**
+
+```
+increase-quantity
+decrease-quantity
+remove-item
+apply-coupon
+proceed-to-checkout
+```
+
+## `collection-list`
+
+A listing of collections in multiple formats.
+
+**Layouts**
+
+| Layout | Description |
+|---|---|
+| `grid` | Regular grid. |
+| `carousel` | Horizontal carousel. |
+| `featured` | First collection large, rest in a grid. |
+| `scrollable` | Horizontal scroll with navigation buttons. |
+
+The `collections` variable is injected automatically by the backend. See [Collections and categories](/data/collections-categories) for the full data structure.
+
+## `hero-banner`
+
+A simple, static banner with no JavaScript. Use it for landing pages and straightforward home sections. If you need a carousel, use `slideshow` instead.
+
+Source files:
+
+- `component-library/hero-banner/template.liquid`
+- `component-library/hero-banner/schema.json`
+- `component-library/hero-banner/styles.css`
+
+## `image-text` and `video-banner`
+
+Split-layout sections — half image or video, half text and CTA. Both automatically optimize LCP: the backend detects when one of these is the first section on the page and injects `<link rel="preload" as="image">`.
+
+## `newsletter`
+
+A simple email capture form that posts to `/api/newsletter/subscribe`.
+
+**Configurable settings**
+
+- `title`, `subtitle`
+- `button_text`, `success_message`
+- `bg_color`, `text_color`
+- `require_name` (boolean) — adds a name field to the form
+
+## Extending and overriding built-ins
+
+### Duplicate and customize
+
+If you want to start from a built-in and make changes:
+
+<Steps>
+  <Step title="Copy the component directory">
+    Copy `packages/render-backend/component-library/<type>/` into `sections/<new-type>/` in your theme.
+  </Step>
+  <Step title="Rename in the schema">
+    Update `"name"` in `schema.json` to distinguish it from the original.
+  </Step>
+  <Step title="Edit the template">
+    Adjust `template.liquid` as needed.
+  </Step>
+  <Step title="Add a JS bundle if required">
+    If you need custom JavaScript, create a new bundle — see [Bundles](/sections/bundles).
+  </Step>
+</Steps>
+
+### Override a built-in completely
+
+If you create `sections/product-details/` in your theme, it **replaces** the built-in with the same type. The resolution order is:
+
+```
+1. Look for sections/<type>/template.liquid in the store theme
+2. If not found, use component-library/<type>/template.liquid
+```
+
+Themes can have completely custom implementations of any built-in section without recompiling anything.
+
+<Warning>
+If you override a built-in that has a JS bundle (e.g., `product-details`), you must either keep the same `data-action` values the bundle expects, or remove the bundle mapping from `SECTION_SCRIPT_MAP`. Otherwise, the old JavaScript will try to interact with HTML elements that no longer exist.
+</Warning>
+
+## Extension reference
+
+| Goal | Approach |
+|---|---|
+| Custom header that keeps the built-in UX | Duplicate `header-pro/` into your theme and edit the template. |
+| Carousel with different hooks | Create a new section `my-carousel` with a new `type` and its own bundle. |
+| Product details with a radically different layout | Override `sections/product-details/` in your theme; reuse or replace the bundle. |
+| A section that does not exist yet | Follow the [Create a section guide](/guides/create-section). |

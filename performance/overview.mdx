@@ -1,0 +1,330 @@
+---
+title: "Corvex Store Performance: Caching and JavaScript"
+description: "How to write fast Corvex sections: pre-render caching, image optimization, lazy loading, and the hybrid JavaScript loading strategy."
+---
+
+Corvex Store is designed to serve fast pages out of the box, but how you write sections has a direct impact on render time, cache efficiency, and Core Web Vitals scores. This page covers the two main levers available to you as a theme developer: the caching system that the backend uses, and the JavaScript loading strategy that controls how quickly your pages become interactive.
+
+## How the caching system works
+
+When a merchant publishes their store, Corvex renders all static pages in parallel and saves the complete HTML to Redis with a seven-day TTL. Every subsequent request for a published page is served from that pre-rendered cache — no Liquid processing, no database queries, no section rendering at request time.
+
+| Scenario | Latency | When it happens |
+|---|---|---|
+| In-memory cache hit (L1) | ~1 ms | Active store requested recently |
+| Redis cache hit (L2) | ~10 ms | After a process restart |
+| Pre-render hit | ~50 ms | Published page after a publish action |
+| Full render (8 sections) | 200–400 ms | Cache miss or draft page |
+| Full render (20 sections) | 500–1,000 ms | Cache miss with many sections |
+
+Published pages are 40–50× faster than live renders. The goal for your sections is to keep draft preview fast and to avoid patterns that cause unnecessary cache misses on published pages.
+
+### Verifying pre-render is active
+
+After publishing, check the response header:
+
+```bash
+curl -I https://yourstore.corvex.io/products
+# X-Cache-Status: PRE_RENDERED  ← pre-render is working
+# X-Cache-Status: MISS           ← full render happening on every request
+```
+
+If you see `MISS` consistently on published pages, verify that Redis is configured and that the store has been published after Redis was added.
+
+### Cache invalidation rules
+
+<AccordionGroup>
+  <Accordion title="Draft pages (editor preview)">
+    Cache is invalidated automatically on every save. The maximum staleness for draft preview is five seconds. If the preview does not update after a settings change, wait five seconds or check that the PUT request returned `200 OK`.
+  </Accordion>
+  <Accordion title="Published pages">
+    Published cache is only invalidated by a new publish action. If a published page appears stale, check `GET /api/stores/:storeId/version-status` for `has_unpublished_changes`. If the store has unpublished changes, publish again to refresh the cache.
+  </Accordion>
+  <Accordion title="Forcing a cache miss in development">
+    Restart the backend process. There is no public flush endpoint. In development this is intentional — it forces you to reproduce realistic cache behavior.
+  </Accordion>
+</AccordionGroup>
+
+### Reading the Server-Timing header
+
+Every response includes a `Server-Timing` header that breaks down render time by phase. Read it in DevTools under **Network → Response Headers**:
+
+```
+Server-Timing: total_render;dur=142,
+               reset_engine;dur=2,
+               global_layout;dur=5,
+               enrich_context;dur=18,
+               render_sections;dur=108,
+               process_styles;dur=4,
+               build_html;dur=4
+```
+
+| Phase | Typical duration | Investigate when |
+|---|---|---|
+| `reset_engine` | 1–5 ms | Always low |
+| `global_layout` | 2–10 ms | Always low |
+| `enrich_context` | 5–50 ms | Above 50 ms — indicates a slow database query |
+| `render_sections` | 50–500 ms | **Main bottleneck** — see below |
+| `process_styles` | 2–10 ms | Always low |
+| `build_html` | 3–15 ms | Always low |
+
+If `enrich_context` is high, the DataProvider is making slow queries. Check database indexes on the columns used for filtering (`category`, `status`, `featured`) and verify that you are using `limit` to cap result sizes.
+
+---
+
+## Writing sections that render fast
+
+### Keep section counts reasonable
+
+Sections render sequentially. The more sections per page, the longer the render. Stay within these practical limits:
+
+| Page type | Recommended maximum |
+|---|---|
+| Home | 8–12 sections |
+| Product | 4–6 sections |
+| Collection | 4–6 sections |
+| Informational | 3–5 sections |
+
+### Consolidate data-fetching sections
+
+Each `product-grid`, `product-catalog`, or `recommended-products` section triggers an independent database query. Having five of these on one page multiplies query time by five.
+
+Instead, use a single grid section with more products, or use `product_list` settings to hand-pick products without a dynamic query:
+
+```json
+{
+  "type":         "product_list",
+  "id":           "products",
+  "label":        "Featured products",
+  "limit":        6
+}
+```
+
+### Use img_url for every image
+
+The Corvex CDN resizes images on demand. Always request the size you actually display — never serve the full original.
+
+<CodeGroup>
+```liquid Bad
+{# Loads a 3000px image into a 300px card — wastes bandwidth, raises LCP #}
+<img src="{{ product.images[0].url }}">
+```
+
+```liquid Good
+<img src="{{ product.images[0].url | img_url: '400x400' }}"
+     alt="{{ product.name }}"
+     width="400"
+     height="400"
+     loading="lazy">
+```
+</CodeGroup>
+
+Always include `width` and `height` attributes to prevent layout shift (CLS). For hero images that are the largest element above the fold, omit `loading="lazy"` and add `fetchpriority="high"` instead.
+
+### Use the style tag for above-the-fold CSS
+
+CSS inside `{% style %}` is injected inline in `<head>` — no extra HTTP request, no render-blocking stylesheet load. Use this for critical styles in every section. Reserve `assets/theme.css` for global base styles that apply to the whole theme.
+
+```liquid
+{% style %}
+  .hero-{{ section.id }} {
+    background: {{ section.settings.bg }};
+    padding: 4rem 2rem;
+  }
+{% endstyle %}
+```
+
+---
+
+## JavaScript loading strategy
+
+Corvex follows a hybrid loading model based on the same approach Shopify uses. It balances fast First Contentful Paint (FCP) with full support for `onclick` attributes — important for compatibility with imported or legacy themes.
+
+### The problem with single-strategy approaches
+
+| Strategy | FCP | onclick compatibility |
+|---|---|---|
+| Everything in `<head>` (no defer) | ~900 ms — page stays white longer | Works |
+| Everything in `<body>` (defer) | ~400 ms — fast paint | Fails if user clicks before script loads |
+| **Hybrid (recommended)** | **~600 ms** | **Works** |
+
+### The hybrid pattern
+
+Split your JavaScript into two files:
+
+```liquid
+<!-- theme.liquid -->
+<head>
+  {{ content_for_header }}
+
+  <!-- Critical: functions used by onclick (target: under 5 KB) -->
+  <!-- Load WITHOUT defer so they exist before the user can interact -->
+  <script src="{{ 'header-critical.js' | asset_url }}"></script>
+</head>
+
+<body>
+  {{ content_for_layout }}
+
+  <!-- Non-critical: utilities, modules, event listeners (~50 KB) -->
+  <!-- defer means this does not block parsing -->
+  <script src="{{ 'theme.js' | asset_url }}" defer></script>
+</body>
+```
+
+<Note>
+The filename `header-critical.js` is a suggestion, not a requirement. You can use any name (`critical.js`, `core.js`, `onclick.js`) as long as the name in `asset_url` matches the uploaded file name exactly.
+</Note>
+
+### What belongs in each file
+
+<CardGroup cols={2}>
+  <Card title="header-critical.js (under 5 KB)" icon="bolt">
+    - Functions called by `onclick=""` attributes (toggleCart, toggleMobileNav)
+    - Any function that must exist before the first user interaction
+    - Keep this minimal — every byte here delays FCP
+  </Card>
+  <Card title="theme.js (deferred, larger OK)" icon="file-code">
+    - Utility functions (formatMoney, debounce)
+    - Module objects (cart, product, collection)
+    - `addEventListener` calls and DOMContentLoaded init
+    - Anything that does not need to exist before the DOM is interactive
+  </Card>
+</CardGroup>
+
+**Example critical file:**
+
+```javascript
+// header-critical.js (~2 KB)
+(function () {
+  'use strict';
+
+  window.toggleCart = function () {
+    document.getElementById('cart-sidebar')?.classList.toggle('open');
+  };
+
+  window.toggleMobileNav = function () {
+    document.getElementById('mobile-nav')?.classList.toggle('open');
+  };
+
+  window.closeAll = function () {
+    document.getElementById('cart-sidebar')?.classList.remove('open');
+    document.getElementById('mobile-nav')?.classList.remove('open');
+  };
+})();
+```
+
+**Example non-critical file:**
+
+```javascript
+// theme.js (~50 KB, loaded with defer)
+(function () {
+  'use strict';
+
+  window.CorvexTheme = {
+    utils: {
+      formatMoney: function (cents) { /* ... */ },
+      debounce:    function (fn, delay) { /* ... */ },
+    },
+    modules: {
+      cart:    { /* ... */ },
+      product: { /* ... */ },
+    },
+  };
+
+  document.addEventListener('DOMContentLoaded', init);
+})();
+```
+
+### Never add defer to the critical file
+
+```liquid
+<!-- Wrong: defer delays the function until DOMContentLoaded -->
+<!-- If user clicks before that, toggleCart is not defined -->
+<script src="{{ 'header-critical.js' | asset_url }}" defer></script>
+
+<!-- Correct: no defer — loads synchronously, small file, minimal FCP impact -->
+<script src="{{ 'header-critical.js' | asset_url }}"></script>
+```
+
+### Section bundles always use defer
+
+Section-specific JavaScript bundles (built by `npm run build:sections`) are loaded by the engine with `defer` automatically. Never include them manually — the engine injects the `<script>` tag based on `SECTION_SCRIPT_MAP`. If you need to delay section initialization further, handle that in `mount()`.
+
+---
+
+## Core Web Vitals
+
+### LCP (Largest Contentful Paint)
+
+The engine automatically injects `<link rel="preload">` for the primary image when the first section is `hero-banner`, `slideshow`, `image-text`, or `video-banner`. To maximize LCP:
+
+- Place the hero section **first** in the page
+- Use `img_url` with a realistic width for banners (`1400x` for full-width)
+- Host images through the Corvex CDN rather than external URLs
+
+If you need to preload a hero image manually:
+
+```liquid
+{% if request.page_type == 'index' %}
+  <link rel="preload"
+        as="image"
+        href="{{ section.settings.hero_image | img_url: '1600x800' }}"
+        media="(min-width: 768px)">
+{% endif %}
+
+<img src="{{ section.settings.hero_image | img_url: '1600x800' }}"
+     alt="{{ section.settings.hero_image_alt }}"
+     fetchpriority="high">
+```
+
+### CLS (Cumulative Layout Shift)
+
+Always set `width` and `height` attributes on images. The pre-render pipeline adds them automatically to published pages, but they need to be present in your markup so browsers can reserve the right space before the image loads.
+
+### FID / INP (Interactivity)
+
+- Keep `header-critical.js` under 5 KB — it is the only render-blocking script
+- Use `defer` on all non-critical scripts
+- Prefer `data-action` + event delegation in `BaseSection` over raw `addEventListener` calls — the BaseSection pattern ensures clean teardown and prevents listener accumulation
+
+### Expected Lighthouse scores with the hybrid strategy
+
+```
+Performance:              90–95 / 100
+First Contentful Paint:   ~600 ms
+Time to Interactive:      ~1,100 ms
+Total Blocking Time:      < 300 ms
+Largest Contentful Paint: < 2.5 s
+```
+
+---
+
+## Cache response headers reference
+
+| Header | Possible values | Meaning |
+|---|---|---|
+| `X-Cache-Status` | `HIT` | Served from in-memory L1 cache |
+| `X-Cache-Status` | `REDIS_HIT` | Served from Redis L2 cache |
+| `X-Cache-Status` | `PRE_RENDERED` | Served from pre-render cache |
+| `X-Cache-Status` | `STALE` | Expired content served while revalidating |
+| `X-Cache-Status` | `REVALIDATED` | Was stale, now fresh |
+| `X-Cache-Status` | `MISS` | Full live render |
+| `X-Render-Time` | e.g. `142ms` | Total server-side render time |
+| `X-Sections-Count` | e.g. `7` | Number of sections rendered |
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="Anti-Patterns" icon="triangle-exclamation" href="/guides/anti-patterns">
+    Common mistakes that hurt performance and correctness
+  </Card>
+  <Card title="Common Issues" icon="circle-exclamation" href="/debug/common-issues">
+    Diagnosing LCP, slow renders, and cache problems
+  </Card>
+  <Card title="Section Bundles" icon="box-archive" href="/sections/bundles">
+    How section JavaScript bundles are built and loaded
+  </Card>
+  <Card title="Engine Scripts and Styles" icon="code" href="/engine/scripts-and-styles">
+    How the engine injects CSS and JS into the page
+  </Card>
+</CardGroup>

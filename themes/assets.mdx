@@ -1,0 +1,253 @@
+---
+title: "Theme assets: CSS, JavaScript, images, and fonts"
+description: "How to reference and serve static CSS, JavaScript, images, and fonts in Corvex Store themes using asset_url, img_url, and the upload API."
+---
+
+Assets are the static files your theme serves directly to the browser: CSS stylesheets, JavaScript bundles, images, fonts, and SVGs. In Corvex Store, theme assets live in the `assets/` directory and are served in production through a CDN with automatic cache busting. This page covers how to reference assets in Liquid templates, the recommended CSS and JavaScript loading strategies, how to upload new assets, and how the platform handles versioning automatically.
+
+## Asset reference filters
+
+### `asset_url` — theme assets
+
+Use `asset_url` to generate the full CDN URL for any file in your theme's `assets/` directory:
+
+```liquid
+<link rel="stylesheet" href="{{ 'theme.css' | asset_url }}">
+<script src="{{ 'theme.js' | asset_url }}" defer></script>
+<img src="{{ 'logo.png' | asset_url }}" alt="Logo">
+```
+
+The filter automatically appends a version query string for cache busting (see [Cache busting](#cache-busting) below).
+
+### `img_url` — dynamic image resizing
+
+Use `img_url` for images uploaded by the merchant (stored in the CDN). Pass a size string to request a resized version:
+
+```liquid
+{# Exact width × height #}
+<img src="{{ section.settings.hero_image | img_url: '1200x600' }}" alt="Hero banner">
+
+{# Width only — height proportional #}
+<img src="{{ product.media.images[0].url | img_url: '600x' }}" alt="{{ product.name }}">
+
+{# Height only — width proportional #}
+<img src="{{ product.media.images[0].url | img_url: 'x400' }}" alt="{{ product.name }}">
+
+{# No resizing — use the original URL directly #}
+<img src="{{ section.settings.background_image }}" alt="Background">
+```
+
+<Tip>
+Always request an image at the size it will actually be displayed. Loading a 3000 px image to show a 300 px thumbnail wastes bandwidth and slows LCP.
+</Tip>
+
+### `repo_asset_url` — platform placeholder images
+
+Use `repo_asset_url` for images that ship with the Corvex Store platform, such as product placeholders and built-in icons:
+
+```liquid
+<img src="{{ 'product-placeholder.png' | repo_asset_url }}" alt="Product placeholder">
+```
+
+This resolves to `/api/repo-assets/{filename}`.
+
+## CSS loading strategy
+
+Corvex Store supports four methods of delivering CSS, in order of priority:
+
+<Steps>
+  <Step title="Section-scoped inline CSS with {% style %}">
+    CSS inside a `{% style %}` block is extracted from the section and injected into `<head>` as critical CSS. Scope it to the section's unique ID to avoid conflicts:
+
+    ```liquid
+    {% style %}
+      .hero-{{ section.id }} {
+        background-color: {{ section.settings.background_color }};
+        min-height: {{ section.settings.height }}px;
+      }
+    {% endstyle %}
+    ```
+
+    This is the recommended method for per-section styles — it's critical by default and automatically scoped.
+  </Step>
+  <Step title="Section styles.css file">
+    If the section directory contains a `styles.css` file, its contents are injected as a `<style>` block in `<head>`. Use this for larger sections where inline styles would clutter the template.
+  </Step>
+  <Step title="Global theme.css via asset_url">
+    Load global styles — resets, typography, utilities — from the `assets/` directory in `layout/theme.liquid`:
+
+    ```liquid
+    <link rel="stylesheet" href="{{ 'theme.css' | asset_url }}">
+    ```
+  </Step>
+  <Step title="External CSS from a CDN">
+    Load fonts and icon libraries from external CDNs. Always preconnect first:
+
+    ```liquid
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family={{ settings.font_heading }}:wght@700&display=swap"
+          rel="stylesheet">
+    ```
+  </Step>
+</Steps>
+
+## JavaScript loading strategy
+
+The recommended approach is a hybrid model: a small critical script without `defer` for `onclick` handlers, and a larger non-critical bundle with `defer` at the end of `<body>`.
+
+```liquid
+<!-- layout/theme.liquid -->
+<head>
+  <!-- Critical JS: small file (~2–5 KB) that defines onclick functions -->
+  <script src="{{ 'critical.js' | asset_url }}"></script>
+
+  {{ content_for_header }}
+</head>
+<body>
+  {{ content_for_layout }}
+
+  <!-- Non-critical JS: utilities, modules, interactions (~50 KB) -->
+  <script src="{{ 'theme.js' | asset_url }}" defer></script>
+</body>
+```
+
+<Warning>
+Do not add `defer` to scripts that define functions referenced in `onclick` attributes. Deferred scripts execute after `DOMContentLoaded` — if a user clicks before the script loads, the handler will not exist yet and you will get a JavaScript error.
+</Warning>
+
+### Section JavaScript with `{% javascript %}`
+
+To add JavaScript scoped to a section, use the `{% javascript %}` tag. The engine injects this code just before `</body>`:
+
+```liquid
+{% javascript %}
+  document.addEventListener('DOMContentLoaded', function() {
+    const slider = document.querySelector('.slider-{{ section.id }}');
+    if (slider) {
+      // initialize slider
+    }
+  });
+{% endjavascript %}
+```
+
+<Note>
+Always wrap section JavaScript in `DOMContentLoaded` or a self-invoking function (IIFE) to avoid polluting the global scope and to guarantee the DOM exists when your code runs.
+</Note>
+
+### Inline script with Liquid variables
+
+When your JavaScript depends on values from Liquid (section settings, product data, and so on), use a data attribute pattern or an inline `<script>` tag:
+
+```liquid
+<div class="countdown-{{ section.id }}"
+     data-target="{{ section.settings.target_date }}"></div>
+
+<script>
+  CorvexCountdown.init(
+    document.querySelector('.countdown-{{ section.id }}'),
+    '{{ section.settings.target_date }}'
+  );
+</script>
+```
+
+## Fonts
+
+### Google Fonts (recommended)
+
+Load Google Fonts in `layout/theme.liquid` using the preconnect + stylesheet pattern for best performance:
+
+```liquid
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family={{ settings.font_heading }}:wght@400;700&family={{ settings.font_body }}:wght@400;500&display=swap"
+      rel="stylesheet">
+```
+
+### Self-hosted fonts
+
+Upload the `.woff2` file via the asset upload API, then reference it in `assets/theme.css`:
+
+```css
+@font-face {
+  font-family: 'MyFont';
+  src: url('/api/stores/STORE_ID/assets/myfont.woff2') format('woff2');
+  font-weight: 400;
+  font-display: swap;
+}
+```
+
+## Uploading assets via API
+
+Use the upload endpoint to add or replace files in the theme's `assets/` directory:
+
+```bash
+POST /api/stores/:storeId/files/assets/upload
+Content-Type: multipart/form-data
+
+# Maximum file size: 100 MB per file
+```
+
+A successful upload returns the file metadata including the new version number:
+
+```json
+{
+  "success": true,
+  "files": [
+    {
+      "name": "theme.js",
+      "size": 51234,
+      "type": "application/javascript",
+      "version": 1745174400123
+    }
+  ]
+}
+```
+
+## Cache busting
+
+Corvex Store automatically versions every asset URL so browsers cache files aggressively and pick up updates the moment you upload a new file.
+
+When you use `asset_url`, the filter appends the current version as a query string:
+
+```liquid
+{{ 'theme.js' | asset_url }}
+{# Output: /api/stores/{id}/files/assets/theme.js/raw?v=1745174400123 #}
+```
+
+How it works:
+
+1. **Upload** — uploading a file generates a new version timestamp automatically
+2. **Filter** — `asset_url` appends `?v={version}` to the URL
+3. **Cache** — browsers cache the file for one year (`Cache-Control: max-age=31536000`)
+4. **Invalidation** — uploading a new version changes the URL, which triggers a fresh download
+
+<Tip>
+You do not need to configure or manage versioning. Use `{{ 'filename.js' | asset_url }}` everywhere and the platform handles cache busting for you.
+</Tip>
+
+## Automatic LCP optimization
+
+The engine scans the first sections of each page for known hero section types (`hero-banner`, `slideshow`, `image-text`, `video-banner`) and automatically adds a preload hint for their primary image:
+
+```html
+<link rel="preload" as="image" href="...image-url...">
+```
+
+This happens without any configuration on your part. To benefit from it, make sure the hero section is the first section on the page.
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="Layout" icon="layout-panel-top" href="/themes/layout">
+    Where to place asset tags in `theme.liquid` for correct load order.
+  </Card>
+  <Card title="Sections overview" icon="cube" href="/sections/overview">
+    How section-scoped CSS and JS integrate with the asset pipeline.
+  </Card>
+  <Card title="Performance overview" icon="gauge" href="/performance/overview">
+    Strategies for optimizing theme load time and Core Web Vitals.
+  </Card>
+  <Card title="API: upload assets" icon="upload" href="/api/overview">
+    Programmatically upload and manage theme assets via the REST API.
+  </Card>
+</CardGroup>

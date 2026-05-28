@@ -1,0 +1,203 @@
+---
+title: "Section Anatomy: Files, Roles, and Render Pipeline"
+description: "The four files of a Corvex Store section, what each one does, and how they connect during server-side rendering and client-side initialization."
+---
+
+A Corvex Store section is a directory containing up to four files. Only `template.liquid` is strictly required; in practice, every section also has a `schema.json` so shoppers can configure it in the editor.
+
+```
+sections/hero-banner/
+├── template.liquid    ← HTML + scoped CSS + optional inline JS
+├── schema.json        ← editor contract (settings + blocks)
+├── styles.css         ← external CSS (optional)
+└── preview.json       ← placeholder data for the initial preview (optional)
+```
+
+## `template.liquid` — the render layer
+
+This is the primary file. It produces the section's HTML from the Liquid context (`section.settings`, `section.blocks`, `product`, `shop`, etc.).
+
+### Canonical structure
+
+```liquid
+{% comment %} 1. Critical CSS (optional) {% endcomment %}
+{% style %}
+  .banner-{{ section.id }} {
+    background: {{ section.settings.bg_color | default: '#000' }};
+    min-height: {{ section.settings.height | default: 400 }}px;
+  }
+{% endstyle %}
+
+{% comment %} 2. Root element with data-section-type and data-section-id {% endcomment %}
+<section class="banner banner-{{ section.id }}"
+         data-section-type="hero-banner"
+         data-section-id="{{ section.id }}"
+         data-autoplay="{{ section.settings.autoplay | default: false }}">
+
+  {% comment %} 3. HTML using section.settings {% endcomment %}
+  {% if section.settings.title != blank %}
+    <h2 data-ref="title">{{ section.settings.title }}</h2>
+  {% endif %}
+
+  {% comment %} 4. Blocks (if applicable) {% endcomment %}
+  {% for block in section.blocks %}
+    <div class="banner__item" data-block="{{ block.type }}" data-block-id="{{ block.id }}">
+      {{ block.settings.text }}
+    </div>
+  {% endfor %}
+
+  {% comment %} 5. Interactive triggers via data-action {% endcomment %}
+  <button type="button" data-action="open-modal" data-ref="open-btn">
+    {{ section.settings.cta_text | default: 'Open' }}
+  </button>
+</section>
+
+{% comment %} 6. Inline JS — only for small, self-contained logic {% endcomment %}
+{% javascript %}
+  document.addEventListener('DOMContentLoaded', function() {
+    // minimal logic here, only if truly necessary
+  });
+{% endjavascript %}
+
+{% comment %} 7. Schema last — renders no HTML {% endcomment %}
+{% schema %}
+{ ... }
+{% endschema %}
+```
+
+<Tip>
+Order matters: CSS first (to style the HTML that follows), then HTML, then JS (which depends on the elements existing), and the `{% schema %}` last.
+</Tip>
+
+### What you must never do in the template
+
+<Warning>
+Do not use `document.querySelector` with a class inside a `{% javascript %}` or `<script>` block. Use `data-ref` or the section-scoped selector instead — see [Data attributes](/sections/data-attributes).
+</Warning>
+
+```liquid
+{% comment %} ❌ WRONG — collides when the section appears twice {% endcomment %}
+<script>
+  document.querySelector('.banner').addEventListener('click', ...);
+</script>
+
+{% comment %} ✅ CORRECT — scoped by data-ref and section.id {% endcomment %}
+<script>
+  (function() {
+    var root = document.querySelector('[data-section-id="{{ section.id }}"]');
+    var btn  = root.querySelector('[data-ref="open-btn"]');
+    btn.addEventListener('click', ...);
+  })();
+</script>
+```
+
+For sections with non-trivial logic, move the JavaScript to a bundle — see [Bundles](/sections/bundles).
+
+## `schema.json` — the editor contract
+
+Declares what shoppers can configure. The editor automatically generates input forms from this JSON.
+
+```json
+{
+  "name": "Hero Banner",
+  "category": "promotion",
+  "settings": [
+    { "type": "header", "content": "Content" },
+    { "type": "text",         "id": "title",    "label": "Title",      "default": "Welcome" },
+    { "type": "textarea",     "id": "subtitle", "label": "Subtitle",   "default": "..." },
+    { "type": "image_picker", "id": "image",    "label": "Image" },
+    { "type": "color",        "id": "bg_color", "label": "Background", "default": "#1a1a2e" },
+    { "type": "range",        "id": "height",   "label": "Height",     "min": 300, "max": 800, "step": 50, "default": 500, "unit": "px" }
+  ],
+  "blocks": [
+    {
+      "type": "slide",
+      "name": "Slide",
+      "settings": [
+        { "type": "text",         "id": "text",  "label": "Text" },
+        { "type": "image_picker", "id": "image", "label": "Image" }
+      ]
+    }
+  ],
+  "max_blocks": 5,
+  "presets": [
+    { "name": "Default", "settings": { "title": "Special offer" } }
+  ]
+}
+```
+
+### Schema fields
+
+| Field | Type | Purpose |
+|---|---|---|
+| `name` | string | Display name in the section picker. |
+| `category` | string | Groups sections in the selector (e.g., `promotion`, `content`, `product`). |
+| `settings` | array | Configurable inputs for shoppers. |
+| `blocks` | array | Block types the section accepts. |
+| `max_blocks` | number | Maximum total blocks allowed (default: unlimited). |
+| `presets` | array | Pre-filled configurations shown when the shopper adds the section. |
+
+See [Schema reference](/sections/schema-reference) for every supported setting type.
+
+## `styles.css` — external CSS (optional)
+
+Use this when your CSS is large, includes `@keyframes`, or benefits from syntax highlighting in a dedicated file. The engine:
+
+1. Reads the file.
+2. Injects the content into `<head>` as an inline `<style>`.
+3. Does **not** auto-scope — you still need to prefix with `section.id` for isolation.
+
+<Note>
+In practice, 90% of sections use only `{% style %}` inside the template. Use `styles.css` only when your CSS exceeds ~150 lines.
+</Note>
+
+## `preview.json` — placeholder data (optional)
+
+Used by the editor to display the section "with life" before the shopper fills in any settings. The structure mirrors the setting IDs in your schema:
+
+```json
+{
+  "title": "Example headline",
+  "image": "https://placehold.co/1400x600",
+  "blocks": [
+    { "type": "slide", "settings": { "text": "Slide 1" } },
+    { "type": "slide", "settings": { "text": "Slide 2" } }
+  ]
+}
+```
+
+When a shopper adds this section to a page, the backend applies `preview.json` values on top of the schema defaults to ensure a visually coherent initial state.
+
+## What happens at runtime
+
+```
+sections/hero-banner/template.liquid
+       │
+       ▼
+┌──────────────────────────────┐
+│ Liquid engine                 │
+│   section.id       ← injected │
+│   section.settings ← from DB  │
+│   section.blocks   ← from DB  │
+│   product / shop / ...        │
+└──────────────────────────────┘
+       │  renders
+       ▼
+┌──────────────────────────────┐
+│ HTML with:                    │
+│   - <style> extracted → <head>│
+│   - <script> kept in body     │
+│   - data-section-type/id      │
+└──────────────────────────────┘
+       │
+       ▼
+┌──────────────────────────────┐
+│ CorvexSections (browser)      │
+│   observes the DOM            │
+│   finds data-section-type     │
+│   calls initFn(el)            │
+│   stores the instance         │
+└──────────────────────────────┘
+```
+
+Continue to [Registry](/sections/registry) and [Lifecycle](/sections/lifecycle) to see the JavaScript side in detail.

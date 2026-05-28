@@ -1,0 +1,234 @@
+---
+title: "Section Bundles: Build and Ship JavaScript for Sections"
+description: "Compile TypeScript section code into JS bundles with esbuild, register the bundle in the script manifest, and have it served conditionally for each page."
+---
+
+Sections that need complex interactivity — carousels, zoom, add-to-cart flows, dynamic filters — have their TypeScript compiled into a JavaScript bundle served by the backend at `/assets/sections/corvex-<name>.js`. This page covers the entire build pipeline from source file to the browser.
+
+<Info>
+Simple sections — text, images, colors, layout — do not need a bundle. Use only `template.liquid` and `schema.json` for those. Bundles are for sections with more than roughly 30 lines of JavaScript.
+</Info>
+
+## Build pipeline overview
+
+```
+packages/editor-frontend/src/lib/
+  sections/slideshow.ts               ← TypeScript source
+  sections/header.ts
+  sections/product-details-full.ts
+         │
+         │ npm run build:sections
+         ▼
+  esbuild (build-sections.mjs)
+    bundle + minify + IIFE
+         │
+         ▼
+packages/render-backend/
+  public-assets/sections/
+    corvex-slideshow.js               ← output served at /assets/sections/
+    corvex-header-pro.js
+    corvex-product-details.js
+         │
+         │ served by Express
+         ▼
+  Browser:
+    <script src="/assets/sections/..." defer></script>
+```
+
+## Step 1 — Write the section TypeScript
+
+Create a file at `packages/editor-frontend/src/lib/sections/my-section.ts`:
+
+```typescript
+import { BaseSection, defineSection } from './base-section';
+
+interface MySectionOptions {
+  autoplay: boolean;
+  speed: number;
+}
+
+class MySection extends BaseSection<MySectionOptions> {
+  static readonly type = 'my-section';
+
+  mount() {
+    const btn = this.ref<HTMLButtonElement>('trigger');
+    if (!btn) return;
+
+    this.on(btn, 'click', () => {
+      console.log('Options:', this.options);
+    });
+  }
+}
+
+defineSection(MySection);
+```
+
+## Step 2 — Register the bundle in `build-sections.mjs`
+
+Open `packages/render-backend/scripts/build-sections.mjs`. This script reads the `SECTION_BUNDLE_ENTRIES` array and generates one IIFE bundle per entry using esbuild. Add your entry:
+
+```javascript
+const SECTION_BUNDLE_ENTRIES = [
+  {
+    type:   'header-pro',
+    source: join(editorSectionsDir, 'header.ts'),
+    output: 'corvex-header-pro',
+  },
+  // ... other entries ...
+
+  // Add your entry here:
+  {
+    type:   'my-section',
+    source: join(editorSectionsDir, 'my-section.ts'),
+    output: 'corvex-my-section',
+  },
+];
+```
+
+| Field | Description |
+|---|---|
+| `type` | The value in `data-section-type` and `static readonly type` on the class. |
+| `source` | Absolute path to the `.ts` file in `packages/editor-frontend/src/lib/sections/`. |
+| `output` | Output filename without the extension. Convention: prefix with `corvex-`. |
+
+Run the build:
+
+```bash
+npm run build:sections --workspace=render-backend
+```
+
+The file `corvex-my-section.js` will appear in `packages/render-backend/public-assets/sections/` and will be served at `/assets/sections/corvex-my-section.js`.
+
+## Step 3 — Map the bundle in `section-scripts.ts`
+
+Open `packages/render-backend/src/engine/section-scripts.ts`. This is the **manifest** that maps `data-section-type` values to their public bundle URLs. The backend uses this to inject only the scripts needed for the current page.
+
+```typescript
+export const SECTION_SCRIPT_MAP: Record<string, SectionScriptEntry> = {
+  'header-pro':      { src: '/assets/sections/corvex-header-pro.js' },
+  'product-details': { src: '/assets/sections/corvex-product-details.js' },
+  'product-grid':    { src: '/assets/sections/corvex-product-grid.js' },
+  'slideshow':       { src: '/assets/sections/corvex-slideshow.js' },
+  'cart-details':    { src: '/assets/sections/corvex-cart-details.js' },
+  'collection-list': { src: '/assets/sections/corvex-collection-list.js' },
+
+  // Add here:
+  'my-section':      { src: '/assets/sections/corvex-my-section.js' },
+};
+```
+
+<Tip>
+The map key (`'my-section'`) must be **identical** to `static readonly type` on the class. This is the same value that appears as `data-section-type` in the rendered HTML.
+</Tip>
+
+### Aliases for renamed sections
+
+If you renamed a section but old themes still reference the old name:
+
+```typescript
+'product-details': {
+  src: '/assets/sections/corvex-product-details.js',
+  aliases: ['product-details-full', 'product-detail'],
+},
+```
+
+Aliases map to the same bundle, so existing themes do not break after a refactor.
+
+## How the backend injects the `<script>` tag
+
+During rendering, the engine:
+
+1. Collects all `data-section-type` values present on the rendered page.
+2. Calls `resolveSectionScripts(types)` — deduplicates, resolves aliases, and returns unique entries.
+3. Calls `renderSectionScriptTags(types)` — generates:
+
+```html
+<script src="/assets/sections/corvex-header-pro.js" defer></script>
+<script src="/assets/sections/corvex-product-details.js" defer></script>
+<script src="/assets/sections/corvex-slideshow.js" defer></script>
+```
+
+These tags are injected before `</body>` in the final HTML.
+
+### Why `defer`
+
+- `defer` prevents the bundle from blocking HTML parsing.
+- Execution happens in insertion order, **after** the DOM is ready.
+- Compatible with `CorvexSections.register(...)` — the order of execution between bundles does not matter; each registers its own type.
+
+## Conditional loading per page
+
+The backend loads only the bundles for sections **present on that specific page**. No bundle is global.
+
+Example — a homepage with `header-pro`, `slideshow`, and `product-grid`:
+
+```html
+<script src="/assets/sections/corvex-header-pro.js" defer></script>
+<script src="/assets/sections/corvex-slideshow.js" defer></script>
+<script src="/assets/sections/corvex-product-grid.js" defer></script>
+```
+
+`corvex-cart-details.js` is not injected because the homepage has no cart section. This gives you per-page modular loading without any additional configuration.
+
+## Cache busting
+
+Bundles are served with `Cache-Control: max-age=31536000` (1 year).
+
+- In **development**: restart the backend after rebuilding.
+- In **production**: deploy the updated bundle; append `?v=<timestamp>` to the URL if you need to invalidate cached copies manually.
+
+## Local development — watch mode
+
+To rebuild bundles automatically while you develop:
+
+```bash
+npm run build:sections:watch --workspace=render-backend
+```
+
+esbuild enters watch mode and recompiles whenever you save a file in `packages/editor-frontend/src/lib/sections/`. After each rebuild, reload the editor iframe (F5) to see your changes.
+
+## Inline JavaScript without a bundle
+
+For sections with truly trivial interactivity, you can skip the entire pipeline and write JavaScript inline in `template.liquid`:
+
+```liquid
+<section data-section-type="counter" data-section-id="{{ section.id }}">
+  <button data-ref="btn">0</button>
+</section>
+
+<script>
+  (function() {
+    var root = document.querySelector('[data-section-id="{{ section.id }}"]');
+    var btn  = root.querySelector('[data-ref="btn"]');
+    var count = 0;
+    btn.addEventListener('click', function() {
+      btn.textContent = String(++count);
+    });
+  })();
+</script>
+```
+
+This does **not** use `CorvexSections.register` — there is no lifecycle (`update` / `destroy`) support. Use this only for sections that are never hot-updated and never need cleanup. For anything more complex, use a bundle.
+
+## Bundle checklist
+
+<Steps>
+  <Step title="Create the TypeScript file">
+    Add `packages/editor-frontend/src/lib/sections/my-section.ts` with a class extending `BaseSection` and a call to `defineSection`.
+  </Step>
+  <Step title="Add the build entry">
+    Add an entry to `SECTION_BUNDLE_ENTRIES` in `build-sections.mjs` with the correct `type`, `source`, and `output` fields.
+  </Step>
+  <Step title="Add the script map entry">
+    Add an entry to `SECTION_SCRIPT_MAP` in `section-scripts.ts`. The key must match `static readonly type`.
+  </Step>
+  <Step title="Add the import">
+    Add an import line in `corvex-sections-init.ts`.
+  </Step>
+  <Step title="Build and verify">
+    Run `npm run build:sections --workspace=render-backend` and confirm `corvex-my-section.js` appears in `public-assets/sections/`.
+  </Step>
+  <Step title="Verify isolation">
+    Test with the section appearing **twice on the same page** to confirm that the two instances do not interfere with each other.
+  </Step>
+</Steps>

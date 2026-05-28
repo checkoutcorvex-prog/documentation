@@ -1,0 +1,282 @@
+---
+title: "Global Liquid objects: shop, request, settings, seo, routes"
+description: "Reference for shop, request, settings, seo, and routes — the Liquid objects Corvex Store injects into every template, layout, section, and snippet."
+---
+
+Corvex Store injects a set of global objects into every Liquid template — layouts, page templates, sections, and snippets alike. You can use these objects anywhere in your theme without any additional configuration. This page documents each global object, its properties, and example usage.
+
+## `shop`
+
+The `shop` object contains information about the store itself.
+
+```typescript
+interface Shop {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string;
+  domain?: string;
+  currency: string;       // e.g. "USD"
+  locale: string;         // e.g. "en-US"
+  email?: string;
+  phone?: string;
+  address?: {
+    street?: string;
+    city?: string;
+    state?: string;
+    country?: string;
+    zip?: string;
+  };
+  social?: {
+    instagram?: string;
+    facebook?: string;
+    whatsapp?: string;
+    tiktok?: string;
+  };
+  logo?: string;          // URL
+  favicon?: string;       // URL
+}
+```
+
+**Liquid usage:**
+
+```liquid
+<h1>{{ shop.name }}</h1>
+<p>{{ shop.description }}</p>
+
+<a href="https://wa.me/{{ shop.social.whatsapp }}">WhatsApp</a>
+
+{% if shop.logo %}
+  <img src="{{ shop.logo }}" alt="{{ shop.name }}">
+{% endif %}
+```
+
+## `request`
+
+The `request` object describes the current HTTP request. Use it to detect page type, check the rendering context, and read query parameters.
+
+```typescript
+interface Request {
+  path: string;                       // "/products/essential-tee"
+  host: string;                       // "mystore.corvex.store"
+  url: string;                        // full URL
+  page_type: string;                  // "index" | "product" | "collection"
+                                      // | "cart" | "page" | ...
+  is_editor: boolean;                 // true when rendering in the editor
+  query: Record<string, string>;      // parsed query string
+}
+```
+
+**Liquid usage:**
+
+```liquid
+<body class="page-type-{{ request.page_type }}">
+
+  {% if request.page_type == 'product' %}
+    <!-- product-specific markup -->
+  {% endif %}
+
+  {% if request.is_editor %}
+    <div class="editor-badge">Editor mode</div>
+  {% endif %}
+
+  {% if request.query.ref %}
+    <p>Referred by {{ request.query.ref }}</p>
+  {% endif %}
+
+</body>
+```
+
+<Tip>
+Use `request.is_editor` to show placeholder content or editor hints that you do not want to appear on the live storefront. For example, show an "Add your logo here" prompt when `is_editor` is `true` and `shop.logo` is empty.
+</Tip>
+
+## `settings`
+
+The `settings` object exposes your theme's global settings — values defined in `config/settings_schema.json` and stored in `config/settings_data.json`. The structure depends entirely on what you declare in the schema.
+
+**Liquid usage:**
+
+```liquid
+<style>
+  :root {
+    --color-primary:   {{ settings.color_primary }};
+    --color-secondary: {{ settings.color_secondary }};
+    --font-heading:    {{ settings.font_heading }};
+    --font-body:       {{ settings.font_body }};
+  }
+</style>
+```
+
+**Minimal `config/settings_schema.json` example:**
+
+```json
+[
+  {
+    "name": "Colors",
+    "settings": [
+      {
+        "type": "color",
+        "id": "color_primary",
+        "label": "Primary color",
+        "default": "#000000"
+      }
+    ]
+  },
+  {
+    "name": "Typography",
+    "settings": [
+      {
+        "type": "select",
+        "id": "font_heading",
+        "label": "Heading font",
+        "options": [
+          { "value": "Inter",    "label": "Inter" },
+          { "value": "Playfair", "label": "Playfair" }
+        ],
+        "default": "Inter"
+      }
+    ]
+  }
+]
+```
+
+See [Settings and data](/themes/settings-data) for the full settings system, including types, defaults, and how merchants edit values in the editor.
+
+## `seo`
+
+The `seo` object contains page-level SEO metadata computed by the backend. Use it in your `layout/theme.liquid` `<head>` block.
+
+```typescript
+interface Seo {
+  title: string;
+  description: string;
+  image?: string;
+  canonical?: string;
+  og?: {
+    title: string;
+    description: string;
+    image?: string;
+    type?: string;
+  };
+  twitter?: {
+    card: string;
+    title: string;
+    description: string;
+    image?: string;
+  };
+}
+```
+
+**Usage in `layout/theme.liquid`:**
+
+```liquid
+<head>
+  <title>{{ seo.title }}</title>
+  <meta name="description" content="{{ seo.description }}">
+  <link rel="canonical" href="{{ seo.canonical }}">
+
+  <meta property="og:title"       content="{{ seo.og.title }}">
+  <meta property="og:description" content="{{ seo.og.description }}">
+  <meta property="og:image"       content="{{ seo.og.image }}">
+  <meta property="og:type"        content="{{ seo.og.type | default: 'website' }}">
+
+  <meta name="twitter:card"        content="{{ seo.twitter.card }}">
+  <meta name="twitter:title"       content="{{ seo.twitter.title }}">
+  <meta name="twitter:description" content="{{ seo.twitter.description }}">
+  <meta name="twitter:image"       content="{{ seo.twitter.image }}">
+</head>
+```
+
+Corvex populates `seo` automatically based on the page type:
+
+| Page type | `seo.title` source | `seo.image` source |
+|---|---|---|
+| Product | Product name | First product image |
+| Collection | Collection name | Collection image |
+| Custom page | Merchant-configured title | Merchant-configured image |
+| Home | `shop.name` + `shop.description` | `shop.logo` |
+
+## `routes`
+
+The `routes` object provides canonical URLs for your store's key pages. Use these instead of hardcoding paths so your theme continues to work if the URL structure changes.
+
+```typescript
+interface Routes {
+  root: string;          // "/"
+  cart: string;          // "/cart"
+  search: string;        // "/search"
+  account?: string;      // "/account" (if enabled)
+  login?: string;
+  logout?: string;
+  product: string;       // "/products" (prefix)
+  collection: string;    // "/collections" (prefix)
+}
+```
+
+**Liquid usage:**
+
+```liquid
+<a href="{{ routes.root }}">Home</a>
+<a href="{{ routes.cart }}">Cart</a>
+<a href="{{ routes.search }}">Search</a>
+
+<a href="{{ routes.product }}/{{ product.slug }}">View product</a>
+<a href="{{ routes.collection }}/{{ collection.slug }}">View collection</a>
+```
+
+<Info>
+Always use `routes.*` for internal links. If your store's URL structure changes in the future, templates that use `routes` continue to work without edits.
+</Info>
+
+## `content_for_header` and `content_for_layout`
+
+These are not objects — they are required placeholders that the Corvex engine replaces during rendering. You must include both in `layout/theme.liquid`:
+
+```liquid
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    {{ content_for_header }}
+  </head>
+  <body>
+    {{ content_for_layout }}
+  </body>
+</html>
+```
+
+`content_for_header` is replaced with SEO tags, critical CSS from sections, and any scripts the engine needs to inject. `content_for_layout` is replaced with the rendered HTML of the page's sections.
+
+<Warning>
+If either placeholder is missing, the engine throws: `Missing required placeholder: content_for_header`. Your layout will not render.
+</Warning>
+
+See [Layout and templates](/themes/layout) for the full layout system.
+
+## Conditional objects
+
+The following objects are only available on specific page types or when specific sections are present:
+
+| Object | When available |
+|---|---|
+| `products` | Pages with sections that request product data, plus `collection` and `search` pages |
+| `product` | Only on `/products/:slug` |
+| `collection` | Only on `/collections/:slug` |
+| `categories` | Always (lightweight, injected on every page) |
+| `discount_ranges` | Always (empty array `[]` if none configured) |
+
+<CardGroup cols={2}>
+  <Card title="Product object" icon="box" href="/data/product">
+    Full reference for `product`, `product.pricing`, `product.images`, and variants.
+  </Card>
+  <Card title="Collections and categories" icon="folder" href="/data/collections-categories">
+    How to use `collection` and `categories` in your templates.
+  </Card>
+  <Card title="Discount ranges" icon="tag" href="/data/discount-ranges">
+    How to display discount badges and progress bars using `discount_ranges`.
+  </Card>
+  <Card title="Cart" icon="shopping-cart" href="/data/cart">
+    Cart architecture, the CartDTO shape, and client-side cart events.
+  </Card>
+</CardGroup>

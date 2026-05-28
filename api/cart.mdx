@@ -1,0 +1,267 @@
+---
+title: "Cart API — manage cart sessions in Corvex Store"
+description: "Get, add, update, and remove items from a Corvex Store cart. Learn how session-based auth works and how cart idempotency prevents duplicate line items."
+---
+
+The Corvex Store Cart API lets you read and write cart state for storefront visitors. Cart operations are session-based — they do not require an admin token, but they do require a session identifier tied to the current visitor. This page covers all cart endpoints, the session auth model, idempotency behavior, and the full response shape.
+
+## How cart authentication works
+
+Cart endpoints use session-based authentication rather than admin Bearer tokens. Every storefront visitor gets a session, and cart state is scoped to that session.
+
+Pass the session on every cart request using both a cookie and a header:
+
+```
+Cookie: session=<session-id>
+x-session-id: <session-id>
+```
+
+<Note>
+Cart read endpoints (`GET /cart`) are public and do not require a session header. Write endpoints (add, update, remove) require both the cookie and the `x-session-id` header.
+</Note>
+
+## Rate limits
+
+Cart operations are limited to **30 requests per minute per session**. Exceeding this returns a `429 Too Many Requests` response with a `Retry-After` header.
+
+## Endpoints
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/api/stores/:storeId/cart` | None | Retrieve the current cart |
+| `POST` | `/api/stores/:storeId/cart/add` | Session | Add an item to the cart |
+| `PATCH` | `/api/stores/:storeId/cart/update` | Session | Update an item's quantity |
+| `DELETE` | `/api/stores/:storeId/cart/remove` | Session | Remove an item from the cart |
+
+## Get cart
+
+Retrieve the current cart for the session. Returns an empty cart if no session exists yet.
+
+```
+GET /api/stores/:storeId/cart
+```
+
+```bash
+curl https://render.corvex.store/api/stores/$STORE_ID/cart
+```
+
+### Response
+
+```json
+{
+  "sessionId": "sess_01xyz",
+  "items": [
+    {
+      "productId": "prod_01abc",
+      "variantKey": "size-40",
+      "name": "Running Shoe Pro",
+      "variantLabel": "Size 40",
+      "price": 129.99,
+      "quantity": 2,
+      "imageUrl": "https://cdn.corvex.store/stores/store_01/products/shoe-main.jpg"
+    }
+  ],
+  "subtotal": 259.98,
+  "itemCount": 2,
+  "updatedAt": "2025-04-15T11:20:00Z"
+}
+```
+
+### Response fields
+
+<ResponseField name="sessionId" type="string" required>
+  The session identifier associated with this cart.
+</ResponseField>
+
+<ResponseField name="items" type="object[]" required>
+  Line items in the cart. Empty array when the cart has no items.
+
+  <Expandable title="item properties">
+    <ResponseField name="productId" type="string" required>
+      Product identifier.
+    </ResponseField>
+    <ResponseField name="variantKey" type="string" required>
+      Variant identifier (for example, `size-40`). Used together with `productId` as the idempotency key.
+    </ResponseField>
+    <ResponseField name="name" type="string" required>
+      Product display name.
+    </ResponseField>
+    <ResponseField name="variantLabel" type="string">
+      Human-readable variant name (for example, `Size 40`).
+    </ResponseField>
+    <ResponseField name="price" type="number" required>
+      Unit price at the time the item was added.
+    </ResponseField>
+    <ResponseField name="quantity" type="number" required>
+      Number of units in the cart.
+    </ResponseField>
+    <ResponseField name="imageUrl" type="string">
+      Product image URL for cart display.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="subtotal" type="number" required>
+  Sum of `price × quantity` for all items.
+</ResponseField>
+
+<ResponseField name="itemCount" type="number" required>
+  Total number of units across all line items.
+</ResponseField>
+
+<ResponseField name="updatedAt" type="string" required>
+  ISO 8601 timestamp of the last cart modification.
+</ResponseField>
+
+## Add item
+
+Add a product to the cart. If the same `(productId, variantKey)` combination already exists, the API increments the quantity instead of creating a duplicate line item.
+
+```
+POST /api/stores/:storeId/cart/add
+```
+
+<ParamField path="body.productId" type="string" required>
+  ID of the product to add.
+</ParamField>
+
+<ParamField path="body.variantKey" type="string" required>
+  Variant identifier. Use the `key` field from the product's `variants` array.
+</ParamField>
+
+<ParamField path="body.quantity" type="number" default="1">
+  Number of units to add.
+</ParamField>
+
+```bash
+curl -X POST https://render.corvex.store/api/stores/$STORE_ID/cart/add \
+  -H "x-session-id: sess_01xyz" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "productId":  "prod_01abc",
+    "variantKey": "size-40",
+    "quantity":   1
+  }'
+```
+
+Returns the updated cart object in the same shape as [Get cart](#response).
+
+## Update item quantity
+
+Change the quantity of an existing cart item. Set `quantity` to `0` to remove the item.
+
+```
+PATCH /api/stores/:storeId/cart/update
+```
+
+<ParamField path="body.productId" type="string" required>
+  ID of the product to update.
+</ParamField>
+
+<ParamField path="body.variantKey" type="string" required>
+  Variant identifier of the item to update.
+</ParamField>
+
+<ParamField path="body.quantity" type="number" required>
+  New quantity. Set to `0` to remove the item from the cart.
+</ParamField>
+
+```bash
+curl -X PATCH https://render.corvex.store/api/stores/$STORE_ID/cart/update \
+  -H "x-session-id: sess_01xyz" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "productId":  "prod_01abc",
+    "variantKey": "size-40",
+    "quantity":   3
+  }'
+```
+
+Returns the updated cart object.
+
+## Remove item
+
+Remove a specific variant from the cart entirely.
+
+```
+DELETE /api/stores/:storeId/cart/remove
+```
+
+<ParamField path="body.productId" type="string" required>
+  ID of the product to remove.
+</ParamField>
+
+<ParamField path="body.variantKey" type="string" required>
+  Variant identifier of the item to remove.
+</ParamField>
+
+```bash
+curl -X DELETE https://render.corvex.store/api/stores/$STORE_ID/cart/remove \
+  -H "x-session-id: sess_01xyz" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "productId":  "prod_01abc",
+    "variantKey": "size-40"
+  }'
+```
+
+Returns the updated cart object with the item removed.
+
+## Idempotency
+
+Cart write operations are idempotent per `(productId, variantKey)`:
+
+- Calling `add` twice with the same product and variant **does not duplicate** the line item — it adds the quantities together.
+- Calling `update` multiple times with the same quantity is safe — the last write wins with no side effects.
+
+This means you can retry failed requests without worrying about duplicate cart entries.
+
+## How Corvex renders cart state
+
+Corvex Store pages are pre-rendered as static HTML and served from cache. Because of this, cart state is not available in LiquidJS templates — templates cannot access live session data without breaking caching.
+
+To display cart information on a page (item count, drawer contents, subtotal), use JavaScript to read from the Cart API after the page loads:
+
+```javascript
+async function getCart(storeId) {
+  const res = await fetch(`/api/stores/${storeId}/cart`);
+  return res.json();
+}
+
+async function updateCartCount(storeId) {
+  const cart = await getCart(storeId);
+  document.querySelectorAll('[data-cart-count]').forEach(el => {
+    el.textContent = cart.itemCount;
+  });
+}
+
+updateCartCount('store_01');
+```
+
+The built-in `cart-details` section provides a ready-made HTML structure with data attributes (`data-cart-count`, `data-cart-items`) that your JavaScript can target.
+
+## Error codes
+
+| Code | Cause |
+|---|---|
+| `400` | Missing required fields (`productId`, `variantKey`) |
+| `404` | Product or variant not found |
+| `409` | Session conflict — retry with same session ID |
+| `429` | Rate limit exceeded — 30 requests/min per session |
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="API overview" icon="map" href="/api/overview">
+    Session auth conventions and rate limit details.
+  </Card>
+  <Card title="Products" icon="box" href="/api/products">
+    Fetch product IDs and variant keys to add to the cart.
+  </Card>
+  <Card title="Webhooks" icon="webhook" href="/api/webhooks">
+    Receive `cart.abandoned` events when sessions go idle.
+  </Card>
+  <Card title="Dynamic data — cart" icon="shopping-cart" href="/data/cart">
+    Use cart data in LiquidJS templates with client-side hydration.
+  </Card>
+</CardGroup>

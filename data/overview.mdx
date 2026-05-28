@@ -1,0 +1,179 @@
+---
+title: "Dynamic Data: how Corvex injects data into templates"
+description: "Learn how Corvex Store injects product, cart, collection, and discount data into your Liquid templates automatically — no fetch calls needed."
+---
+
+Corvex Store makes dynamic data available inside your Liquid templates by resolving and injecting it on the server before rendering. You never need to write `fetch` calls or data-loading logic inside templates — instead, you access ready-made objects like `product`, `products`, `categories`, and `discount_ranges` directly in your Liquid code.
+
+## How data reaches your templates
+
+Corvex follows a Shopify-like model: the render backend inspects which sections are on the current page, fetches only the data those sections need, and injects everything into the Liquid context before rendering begins.
+
+```
+Store API (products, collections, categories)
+        │
+        ▼
+  DataProvider — normalizes, caches, retries
+        │
+        ▼
+  Context builder — decides which objects to fetch
+  based on the sections present on the page
+        │
+        ▼
+  LiquidJS renders with the injected context:
+    {{ product.name }}
+    {% for p in products %}...{% endfor %}
+```
+
+This architecture gives you:
+
+- **Predictable shapes** — every object has a consistent structure across pages.
+- **Automatic caching** — queries are deduplicated and cached so multiple sections sharing data make only one network call.
+- **Safe fallbacks** — the backend handles upstream API errors without breaking your template render.
+
+## Which objects are available on each page type
+
+Not every object is present on every page. The table below shows what Corvex injects per page type:
+
+| Object | `index` | `page` | `product` | `collection` | `search` | `cart` |
+|---|---|---|---|---|---|---|
+| `shop` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `request` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `settings` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `routes` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `seo` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `products` | ✅* | ✅* | ✅* | ✅ | ✅ | — |
+| `categories` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `discount_ranges` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `product` (singular) | — | — | ✅ | — | — | — |
+| `collection` (singular) | — | — | — | ✅ | — | — |
+| `cart` | — | — | — | — | — | client-side only |
+
+\* Available only when the page contains a section that requires product data (such as `product-grid`).
+
+## Just-in-time data fetching
+
+Corvex does not fetch all possible data for every page. The context builder inspects the sections present on the page and runs only the queries those sections require.
+
+For example, if your home page (`index`) has a `hero-banner`, a `slideshow`, and a `product-grid` section:
+
+```
+Context builder detects:
+  ├── hero-banner   → no extra data needed
+  ├── slideshow     → no extra data needed
+  └── product-grid  → needs `products`
+
+→ DataProvider.getProducts({ limit: 12 }) runs once
+→ All sections on the page share the same `products` variable
+```
+
+This prevents duplicate queries and ensures all sections on a page use the same cache entry.
+
+## Cache TTLs
+
+All data queries go through a central cache keyed by store ID and query parameters:
+
+| Query | Draft TTL | Published TTL |
+|---|---|---|
+| `getProducts(...)` | 5 s | 30 s |
+| `getProduct(id)` | 5 s | 60 s |
+| `getCollections()` | 5 s | 60 s |
+| `getCategories()` | 5 s | 60 s |
+| `getDiscountRanges()` | 5 s | 60 s |
+
+Draft pages use short TTLs so your edits appear quickly in the editor. Published pages use longer TTLs to maximize performance under traffic.
+
+## Accessing data in templates
+
+### Global objects (all pages)
+
+```liquid
+{{ shop.name }}
+{{ settings.color_primary }}
+{{ routes.cart }}
+```
+
+### Product lists
+
+```liquid
+{% for product in products %}
+  <div>{{ product.name }} — {{ product.pricing.price | money }}</div>
+{% endfor %}
+```
+
+### Product page
+
+```liquid
+<h1>{{ product.name }}</h1>
+<p>{{ product.description }}</p>
+<span>{{ product.pricing.price | money }}</span>
+
+{% if product.variants.size > 1 %}
+  <select name="variant">
+    {% for variant in product.variants %}
+      <option value="{{ variant.id }}">
+        {{ variant.title }} — {{ variant.price | money }}
+      </option>
+    {% endfor %}
+  </select>
+{% endif %}
+```
+
+### Collection page
+
+```liquid
+<h1>{{ collection.name }}</h1>
+
+{% for product in collection.products %}
+  {% include 'product-card' %}
+{% endfor %}
+```
+
+### Section with a `product_list` setting
+
+```liquid
+{% for product in section.settings.featured_products %}
+  {{ product.name }}
+{% endfor %}
+```
+
+When a merchant selects products manually via a `product_list` setting, Corvex automatically expands the stored IDs into full product objects before rendering.
+
+## What is NOT in the Liquid context
+
+<Warning>
+These objects do not exist in Liquid templates — do not attempt to use them:
+
+- **`cart`** — The cart is entirely client-side (localStorage + REST API). Use the built-in `cart-details` section and JavaScript to display cart contents.
+- **`customer`** — There is no built-in authentication system. Implement authentication client-side.
+- **`checkout`** — Checkout is managed by an external provider.
+- **`metafields`** — Use section settings for merchant-configurable data instead.
+- **`pages`** — The store's page list is not exposed as an array.
+</Warning>
+
+## Legacy API compatibility
+
+The Corvex data layer normalizes responses from both the current API (v1.2.0) and older API shapes. You can use either form in templates and both will work:
+
+| Legacy field | Current field | In Liquid |
+|---|---|---|
+| `product.pricing.compareAtPrice` | `product.pricing.discountedPrice` | both work |
+| `product.media.images[0].url` | `product.images[0].url` | both work |
+| `variant.compare_at_price` | `variant.discountedPrice` | both work |
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Global objects" icon="globe" href="/data/global-objects">
+    Reference for `shop`, `request`, `settings`, `seo`, and `routes` — available on every page.
+  </Card>
+  <Card title="Product object" icon="box" href="/data/product">
+    Full reference for `product`, including pricing, images, variants, and product types.
+  </Card>
+  <Card title="Cart" icon="shopping-cart" href="/data/cart">
+    How the cart works, the CartDTO shape, REST API endpoints, and client-side events.
+  </Card>
+  <Card title="Collections and categories" icon="folder" href="/data/collections-categories">
+    How to list, filter, and display products grouped by collection or category.
+  </Card>
+</CardGroup>

@@ -1,0 +1,152 @@
+{
+  "projectType": "saas",
+  "projectName": "Corvex Store",
+  "projectDescription": "A headless e-commerce platform with a Shopify-like visual drag-and-drop editor, LiquidJS template engine, and REST API for building fully customizable online stores.",
+  "theme": "luma",
+  "primaryColor": "#6366f1",
+  "lightColor": "#818cf8",
+  "darkColor": "#4f46e5",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction/overview",
+              "introduction/concepts",
+              "introduction/how-it-works",
+              "introduction/quickstart"
+            ]
+          },
+          {
+            "group": "Themes",
+            "pages": [
+              "themes/overview",
+              "themes/structure",
+              "themes/layout",
+              "themes/templates",
+              "themes/settings-data",
+              "themes/snippets",
+              "themes/assets"
+            ]
+          },
+          {
+            "group": "Sections",
+            "pages": [
+              "sections/overview",
+              "sections/anatomy",
+              "sections/schema-reference",
+              "sections/data-attributes",
+              "sections/blocks",
+              "sections/lifecycle",
+              "sections/base-section",
+              "sections/registry",
+              "sections/bundles",
+              "sections/built-in-library"
+            ]
+          },
+          {
+            "group": "Dynamic Data",
+            "pages": [
+              "data/overview",
+              "data/global-objects",
+              "data/product",
+              "data/cart",
+              "data/collections-categories",
+              "data/discount-ranges"
+            ]
+          },
+          {
+            "group": "Liquid Engine",
+            "pages": [
+              "engine/liquid",
+              "engine/tags",
+              "engine/filters",
+              "engine/scripts-and-styles"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/create-theme",
+              "guides/create-section",
+              "guides/templates",
+              "guides/anti-patterns",
+              "performance/overview",
+              "debug/common-issues"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "REST API",
+            "pages": [
+              "api/overview",
+              "api/products",
+              "api/cart",
+              "api/webhooks"
+            ]
+          },
+          {
+            "group": "Real-time",
+            "pages": [
+              "api/websocket"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Visual drag-and-drop editor with real-time preview",
+    "LiquidJS template engine (Shopify-compatible syntax)",
+    "Reusable section components with JSON schema configuration",
+    "Multi-tenant store architecture",
+    "REST API for stores, pages, sections, products, and themes",
+    "WebSocket-powered live editor preview",
+    "Draft/published workflow with snapshots and rollback",
+    "Built-in component library (product-details, hero-banner, cart-details, etc.)",
+    "Dynamic data (products, cart, collections, discounts) via Liquid",
+    "Theme export/import as ZIP",
+    "Asset storage with Cloudflare R2 and CDN caching",
+    "Webhook support for order, cart, and theme events"
+  ],
+  "publicApiSurface": [
+    "POST /api/stores",
+    "GET /api/stores/:id",
+    "PATCH /api/stores/:id",
+    "GET /api/stores/:id/settings",
+    "PUT /api/stores/:id/settings",
+    "GET /api/stores/:id/pages",
+    "POST /api/stores/:id/pages",
+    "PATCH /api/stores/:id/pages/:pid",
+    "DELETE /api/stores/:id/pages/:pid",
+    "POST /api/stores/:id/pages/:pid/sections",
+    "PATCH /api/stores/:id/pages/:pid/sections/:sid",
+    "DELETE /api/stores/:id/pages/:pid/sections/:sid",
+    "POST /api/stores/:id/pages/:pid/sections/reorder",
+    "POST /api/stores/:id/pages/:pid/sections/:sid/blocks",
+    "PATCH /api/stores/:id/pages/:pid/sections/:sid/blocks/:bid",
+    "DELETE /api/stores/:id/pages/:pid/sections/:sid/blocks/:bid",
+    "GET /api/stores/:id/products",
+    "GET /api/stores/:id/cart",
+    "POST /api/stores/:id/cart/add",
+    "GET /api/stores/:id/themes",
+    "POST /api/stores/:id/themes/install",
+    "POST /api/stores/:id/themes/:tid/activate",
+    "POST /api/stores/:id/themes/:tid/publish",
+    "POST /api/stores/:id/themes/:tid/rollback",
+    "POST /api/stores/:id/files",
+    "GET /api/stores/:id/files",
+    "DELETE /api/stores/:id/files/:fid",
+    "GET /api/stores/:id/full-page/*",
+    "POST /api/render/section",
+    "window.CorvexSections.register(type, initFn)",
+    "WebSocket events: section:update, section:add, section:remove, theme:publish"
+  ]
+}

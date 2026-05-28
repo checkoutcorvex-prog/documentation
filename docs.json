@@ -1,0 +1,117 @@
+{
+  "$schema": "https://mintlify.com/schema.json",
+  "name": "Corvex Store",
+  "theme": "luma",
+  "colors": {
+    "primary": "#6366f1",
+    "light": "#818cf8",
+    "dark": "#4f46e5"
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/corvexstore"
+    }
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction/overview",
+              "introduction/concepts",
+              "introduction/how-it-works",
+              "introduction/quickstart"
+            ]
+          },
+          {
+            "group": "Themes",
+            "pages": [
+              "themes/overview",
+              "themes/structure",
+              "themes/layout",
+              "themes/templates",
+              "themes/settings-data",
+              "themes/snippets",
+              "themes/assets"
+            ]
+          },
+          {
+            "group": "Sections",
+            "pages": [
+              "sections/overview",
+              "sections/anatomy",
+              "sections/schema-reference",
+              "sections/data-attributes",
+              "sections/blocks",
+              "sections/lifecycle",
+              "sections/base-section",
+              "sections/registry",
+              "sections/bundles",
+              "sections/built-in-library"
+            ]
+          },
+          {
+            "group": "Dynamic Data",
+            "pages": [
+              "data/overview",
+              "data/global-objects",
+              "data/product",
+              "data/cart",
+              "data/collections-categories",
+              "data/discount-ranges"
+            ]
+          },
+          {
+            "group": "Liquid Engine",
+            "pages": [
+              "engine/liquid",
+              "engine/tags",
+              "engine/filters",
+              "engine/scripts-and-styles"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/create-theme",
+              "guides/create-section",
+              "guides/templates",
+              "guides/anti-patterns",
+              "performance/overview",
+              "debug/common-issues"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "REST API",
+            "pages": [
+              "api/overview",
+              "api/products",
+              "api/cart",
+              "api/webhooks"
+            ]
+          },
+          {
+            "group": "Real-time",
+            "pages": [
+              "api/websocket"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "footer": {
+    "socials": {
+      "website": "https://usecorvex.com.br"
+    }
+  }
+}

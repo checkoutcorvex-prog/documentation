@@ -1,0 +1,198 @@
+---
+title: "Liquid templates in Corvex Store"
+description: "Learn the LiquidJS syntax Corvex Store supports — output tags, conditionals, loops, variable assignment, and key differences from Shopify Liquid."
+---
+
+Corvex Store uses LiquidJS as its template engine — a JavaScript implementation of Liquid that is compatible with most Shopify Liquid syntax. Every `.liquid` file in your theme mixes HTML with Liquid output tags, logic tags, and filters to produce the final HTML delivered to shoppers. This page covers the syntax you use day-to-day in templates and explains the key differences from Shopify Liquid.
+
+## Basic syntax
+
+Liquid uses three types of delimiters:
+
+```liquid
+{# Output — renders a value #}
+{{ product.name }}
+{{ product.pricing.price | money }}
+
+{# Tags — control flow and logic #}
+{% if product.featured %}
+  <span class="badge">Featured</span>
+{% endif %}
+
+{# Comments — stripped from output #}
+{# This comment does not appear in the rendered HTML #}
+```
+
+## Conditionals
+
+Use `if`, `elsif`, and `else` to branch on any truthy value or comparison:
+
+```liquid
+{% if product.pricing.compareAtPrice > product.pricing.price %}
+  <span class="sale">On sale!</span>
+{% elsif product.featured %}
+  <span class="featured">Featured</span>
+{% else %}
+  <span class="regular">Product</span>
+{% endif %}
+```
+
+Use `unless` as the inverse of `if` to keep conditions readable:
+
+```liquid
+{% unless product.status == 'DRAFT' %}
+  <div>{{ product.name }}</div>
+{% endunless %}
+```
+
+Supported comparison operators: `==`, `!=`, `<`, `>`, `<=`, `>=`, `and`, `or`, `contains`.
+
+## Loops
+
+Iterate over arrays with `for`. Add `limit` and `offset` to paginate without an extra query:
+
+```liquid
+{% for product in products limit: 8 offset: 0 %}
+  <div class="card">
+    <h3>{{ product.name }}</h3>
+    <p>{{ product.pricing.price | money }}</p>
+  </div>
+{% else %}
+  <p>No products found.</p>
+{% endfor %}
+```
+
+The `else` branch renders only when the array is empty.
+
+### Loop variables
+
+Inside any `for` block you can read the built-in `forloop` object:
+
+```liquid
+{% for item in items %}
+  {{ forloop.index }}     {# 1, 2, 3 … (1-indexed) #}
+  {{ forloop.index0 }}    {# 0, 1, 2 … (0-indexed) #}
+  {{ forloop.first }}     {# true on first iteration #}
+  {{ forloop.last }}      {# true on last iteration #}
+  {{ forloop.length }}    {# total number of items #}
+{% endfor %}
+```
+
+## Variables
+
+Assign values to reuse them later or to pre-process a filter chain:
+
+```liquid
+{% assign color = '#e63946' %}
+{{ color }}
+
+{% assign title = section.settings.title | upcase %}
+{{ title }}
+```
+
+Use `capture` to build a multi-line string:
+
+```liquid
+{% capture card_html %}
+  <div class="card">{{ product.name }}</div>
+{% endcapture %}
+{{ card_html }}
+```
+
+## Accessing nested data
+
+Liquid supports dot notation and bracket indexing on any object:
+
+```liquid
+{{ product.media.images[0].url }}
+{{ section.settings.menu_items[0].label }}
+```
+
+Combine nested loops to correlate data across objects:
+
+```liquid
+{% for category in categories %}
+  {% for product in products %}
+    {% if product.categories[0].slug == category.slug %}
+      {{ product.name }}
+    {% endif %}
+  {% endfor %}
+{% endfor %}
+```
+
+Check for blank values — `blank` matches `null`, empty string, and empty array — before rendering:
+
+```liquid
+{% if section.settings.background_image != blank %}
+  <img src="{{ section.settings.background_image }}" alt="">
+{% endif %}
+```
+
+## Corvex custom tags
+
+Corvex extends standard Liquid with a set of custom tags for sections, snippets, styles, and scripts. See the [Tags reference](/engine/tags) for full syntax.
+
+<CardGroup cols={2}>
+  <Card title="{% style %}" icon="paintbrush" href="/engine/tags">
+    Scope CSS to a section and inject it into the `<head>` automatically.
+  </Card>
+  <Card title="{% javascript %}" icon="code" href="/engine/tags">
+    Add inline JavaScript that is inserted before `</body>`.
+  </Card>
+  <Card title="{% section %}" icon="layout-grid" href="/engine/tags">
+    Render another section by name inside a layout template.
+  </Card>
+  <Card title="{% render %}" icon="file-code" href="/engine/tags">
+    Include a snippet with an isolated variable scope.
+  </Card>
+</CardGroup>
+
+## Filters
+
+Filters transform output values using the `|` pipe character and can be chained:
+
+```liquid
+{{ product.name | strip | upcase | truncate: 40 }}
+{{ product.pricing.price | money }}
+{{ product.media.images[0].url | img_url: '400x400' }}
+{{ 'theme.css' | asset_url }}
+```
+
+See the [Filters reference](/engine/filters) for every filter available in Corvex.
+
+## Differences from Shopify Liquid
+
+Corvex Store supports the core Liquid language but does not include every Shopify-specific tag or object. Use the table below to find the right Corvex equivalent before you port a Shopify theme.
+
+| Feature | Shopify | Corvex Store |
+|---|---|---|
+| `{% paginate %}` | Supported | Not supported — use API pagination |
+| `{% form %}` | Supported | Not supported — use `<form>` HTML directly |
+| `cart` object in templates | Server-side | Client-side only |
+| `customer` object | Server-side | Client-side only |
+| `linklists` global | Supported | Not supported — use `section.settings.menu_items` |
+| `all_products` global | Supported | Not supported — use `products` (auto-injected) |
+| `metafields` | Supported | Not supported — use section settings |
+| `{% tablerow %}` | Supported | Not supported — use `{% for %}` with CSS grid |
+| `shopify_asset_url` filter | Supported | Not supported — use `asset_url` |
+
+<Warning>
+Attempting to use unsupported Shopify tags such as `{% paginate %}` or `{% form %}` will cause a template render error. Check the [Tags reference](/engine/tags) for the complete list of supported and unsupported tags.
+</Warning>
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="Tags reference" icon="tag" href="/engine/tags">
+    Every Liquid tag supported in Corvex, including custom tags like `{% section %}` and `{% schema %}`.
+  </Card>
+  <Card title="Filters reference" icon="filter" href="/engine/filters">
+    All standard and custom Corvex filters with usage examples.
+  </Card>
+  <Card title="Scripts and styles" icon="layers" href="/engine/scripts-and-styles">
+    How to embed CSS and JavaScript in section templates.
+  </Card>
+  <Card title="Global data objects" icon="database" href="/data/global-objects">
+    All variables available in the Liquid context — `shop`, `request`, `settings`, and more.
+  </Card>
+</CardGroup>

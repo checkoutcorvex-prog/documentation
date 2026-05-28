@@ -1,0 +1,249 @@
+---
+title: "Theme settings: schema, data, and Liquid access"
+description: "How to declare global theme settings in settings_schema.json, understand stored values in settings_data.json, and access them in Liquid via the settings object."
+---
+
+Global theme settings let merchants customize a store's colors, fonts, logo, and other design tokens through the visual editor — without touching any code. As a theme developer you declare what settings exist and what their defaults are; the editor handles collecting merchant input and persisting the values. In Corvex Store, settings are declared in `config/settings_schema.json` and the saved values live in `config/settings_data.json`. Both are accessible in every Liquid template, section, and snippet via the `settings` object.
+
+## The two config files
+
+```
+config/
+├── settings_schema.json    # declares editor inputs and their defaults
+└── settings_data.json      # stores the merchant's saved values
+```
+
+<Info>
+You write and maintain `settings_schema.json`. The editor writes `settings_data.json` automatically when a merchant saves their settings — you do not need to edit it by hand.
+</Info>
+
+## `settings_schema.json`
+
+This file declares the groups of inputs that appear in the "Theme settings" panel of the visual editor. Each top-level item is a named group, and each group contains an array of setting objects.
+
+```json
+[
+  {
+    "name": "Colors",
+    "settings": [
+      {
+        "type":    "color",
+        "id":      "color_primary",
+        "label":   "Primary color",
+        "default": "#4f46e5"
+      },
+      {
+        "type":    "color",
+        "id":      "color_secondary",
+        "label":   "Secondary color",
+        "default": "#8b5cf6"
+      }
+    ]
+  },
+  {
+    "name": "Typography",
+    "settings": [
+      {
+        "type":  "select",
+        "id":    "font_heading",
+        "label": "Heading font",
+        "options": [
+          { "value": "Inter",    "label": "Inter" },
+          { "value": "Playfair", "label": "Playfair Display" },
+          { "value": "Poppins",  "label": "Poppins" }
+        ],
+        "default": "Inter"
+      },
+      {
+        "type":  "select",
+        "id":    "font_body",
+        "label": "Body font",
+        "options": [
+          { "value": "Inter",  "label": "Inter" },
+          { "value": "Roboto", "label": "Roboto" }
+        ],
+        "default": "Inter"
+      }
+    ]
+  },
+  {
+    "name": "Logo",
+    "settings": [
+      {
+        "type":  "image_picker",
+        "id":    "logo_url",
+        "label": "Logo image",
+        "info":  "Recommended: 240×60 px, PNG with transparent background."
+      },
+      {
+        "type":    "range",
+        "id":      "logo_width",
+        "label":   "Logo width (px)",
+        "min":     80,
+        "max":     300,
+        "step":    10,
+        "default": 160
+      }
+    ]
+  }
+]
+```
+
+Global settings support the same input types as section settings: `text`, `textarea`, `number`, `range`, `checkbox`, `select`, `multiselect`, `color`, `image_picker`, `url`, `link_list`, `product_list`, and `header`. See [Schema reference](/sections/schema-reference) for the full type list.
+
+## `settings_data.json`
+
+This file contains the merchant's saved values, one flat key per setting `id`. The editor manages this file — you read from it in Liquid but rarely need to edit it directly.
+
+```json
+{
+  "color_primary":   "#000000",
+  "color_secondary": "#666666",
+  "font_heading":    "Playfair",
+  "font_body":       "Inter",
+  "logo_url":        "https://cdn.example.com/logo.png",
+  "logo_width":      180
+}
+```
+
+## Accessing settings in Liquid
+
+Every value in `settings_data.json` is accessible in any template, section, or snippet using `{{ settings.<id> }}`.
+
+### Expose settings as CSS variables
+
+The recommended pattern is to declare all settings as CSS custom properties in `layout/theme.liquid` so they propagate to every stylesheet automatically:
+
+```liquid
+<style>
+  :root {
+    --color-primary:   {{ settings.color_primary }};
+    --color-secondary: {{ settings.color_secondary }};
+    --font-heading:    '{{ settings.font_heading }}', sans-serif;
+    --font-body:       '{{ settings.font_body }}', sans-serif;
+  }
+</style>
+```
+
+Then use the variables anywhere in your CSS:
+
+```css
+.btn-primary { background: var(--color-primary); }
+h1           { font-family: var(--font-heading); }
+```
+
+### Render the logo
+
+```liquid
+{% if settings.logo_url != blank %}
+  <img src="{{ settings.logo_url | img_url: '400x' }}"
+       alt="{{ shop.name }}"
+       width="{{ settings.logo_width }}">
+{% else %}
+  <span class="site-title">{{ shop.name }}</span>
+{% endif %}
+```
+
+### Use settings inside sections
+
+Global settings are available inside section templates alongside section-scoped settings:
+
+```liquid
+<button style="background: {{ settings.color_primary }}">
+  Add to cart
+</button>
+```
+
+<Tip>
+Keep these three namespaces straight:
+
+- `settings.X` — global theme settings (this page)
+- `section.settings.X` — settings specific to the current section instance
+- `block.settings.X` — settings specific to the current block within a section
+</Tip>
+
+## Handling blank values
+
+If a merchant has not set a value and the schema declares no `default`, the value comes through as an empty string. Always provide a `default` in your schema for required settings, and guard optional ones with `!= blank`:
+
+```liquid
+{% if settings.logo_url != blank %}
+  <img src="{{ settings.logo_url | img_url: '400x' }}">
+{% endif %}
+
+{{ settings.font_heading | default: 'Inter' }}
+```
+
+## Conditional settings visibility
+
+You can make one setting visible only when another setting has a specific value:
+
+```json
+{
+  "type":    "checkbox",
+  "id":      "show_logo",
+  "label":   "Show logo",
+  "default": true
+},
+{
+  "type":      "image_picker",
+  "id":        "logo_url",
+  "label":     "Logo image",
+  "visible_if": { "show_logo": true }
+}
+```
+
+<Info>
+`visible_if` is opt-in to each editor implementation. Treat it as a progressive enhancement for cleaner UI — not as a security or validation control.
+</Info>
+
+## Adding a new global setting
+
+<Steps>
+  <Step title="Edit settings_schema.json">
+    Open `config/settings_schema.json` and add a new setting object to the appropriate group, or create a new group. Always include a `default` value.
+  </Step>
+  <Step title="Use the setting in Liquid">
+    Reference the new setting in your layout, templates, or sections via `{{ settings.your_new_id }}`.
+  </Step>
+  <Step title="Test with a blank value">
+    Verify your Liquid handles the case where the merchant has not yet set the value (empty string).
+  </Step>
+</Steps>
+
+Schema changes appear automatically in the editor the next time it is opened.
+
+<Warning>
+Never remove a setting `id` that is already in use in a published theme. Doing so breaks any template or CSS that references it. To retire a setting, mark it visually (for example, add "Legacy" to the label) and keep it in the schema until you have migrated all references.
+</Warning>
+
+## Theme presets
+
+Because `settings_data.json` is a plain JSON file, it is portable. You can ship multiple preset variants alongside your theme:
+
+```
+config/
+├── settings_data.json               # active settings
+├── settings_data.dark.json          # dark mode preset
+└── settings_data.summer-2025.json   # seasonal preset
+```
+
+Merchants can swap presets via the editor or the API.
+
+## Performance implications
+
+Global settings are injected once per render and participate in page caching. When a merchant saves new global settings:
+
+1. The backend validates the updated `settings_data.json`
+2. The cache for **all pages** in the store is invalidated
+3. The next render for each page picks up the new values
+
+Background pre-rendering for published pages begins automatically after a save.
+
+## Settings checklist
+
+- Every setting in `settings_schema.json` has a `default` value
+- Color and font settings are exposed as CSS variables in `layout/theme.liquid`
+- The logo renders a text fallback when `settings.logo_url` is blank
+- No setting `id` is removed while it is still referenced in templates or CSS
+- Typography and color settings are tested with extreme values (very long text, high-contrast colors)

@@ -1,0 +1,138 @@
+---
+title: "Sections Overview: Corvex Store Page Building Blocks"
+description: "Learn what Corvex Store sections are, how they fit into the rendering pipeline, and when to create a new section versus using snippets or templates."
+---
+
+Sections are the fundamental building blocks of every Corvex Store page. Everything a shopper sees — the header, hero banner, product grid, cart, and footer — is a section. As a theme developer, you compose pages by combining sections, each of which owns its markup, styles, settings schema, and optionally a JavaScript lifecycle.
+
+## What a section is made of
+
+Every section is a directory under `sections/{name}/` that can contain up to four files:
+
+- A **LiquidJS template** (`template.liquid`) that produces HTML.
+- A **schema** (`schema.json`) that declares what the editor can configure.
+- Optional **CSS** (`styles.css` or a `{% style %}` block) scoped by `section.id`.
+- An optional **JavaScript bundle** registered in `window.CorvexSections` for interactivity.
+- Optional **blocks** — repeatable sub-elements that shoppers add dynamically.
+
+```
+sections/
+├── hero-banner/
+│   ├── template.liquid
+│   ├── schema.json
+│   └── styles.css
+└── testimonials/
+    ├── template.liquid
+    └── schema.json
+```
+
+## Two kinds of sections
+
+### File-based sections (theme sections)
+
+These are Liquid files you create in `sections/{name}/`. The content comes from the theme's filesystem and is resolved on every render. You can build entire pages using only file-based sections — no JavaScript required unless you need interactivity.
+
+### Registry-based sections (built-in library)
+
+First-party sections that ship with the platform — `product-details`, `header-pro`, `product-grid`, `slideshow`, `cart-details`, `collection-list`. They are:
+
+1. Rendered from the platform's built-in component library.
+2. Made interactive through pre-compiled JS bundles served at `/assets/sections/corvex-*.js`.
+3. Automatically registered in `window.CorvexSections` by the editor runtime.
+
+You can build file-based sections without touching JavaScript. If you need sophisticated interactivity — modals, carousels, zoom, add-to-cart — create a registry-based section following the pattern in [Registry](/sections/registry) and [Bundles](/sections/bundles).
+
+## What every section must have
+
+<Steps>
+  <Step title="A root element with the required attributes">
+    The HTML your `template.liquid` emits must contain a **single root element** with:
+
+    ```liquid
+    <section data-section-type="{{ section.type }}"
+             data-section-id="{{ section.id }}"
+             class="my-section my-section-{{ section.id }}">
+      <!-- content -->
+    </section>
+    ```
+
+    - `data-section-type` is the identifier used to look up the init function in the registry.
+    - `data-section-id` is unique per page instance — used to scope CSS and link the editor to the preview.
+
+    Without these attributes, the section **will not reinitialize** on hot updates and the editor **cannot** highlight or select it in the preview.
+  </Step>
+  <Step title="CSS scoped by section.id">
+    Two instances of the same section on the same page need isolated styles:
+
+    ```liquid
+    {% style %}
+      .banner-{{ section.id }} { background: {{ section.settings.bg_color }}; }
+    {% endstyle %}
+    ```
+
+    See [Data attributes](/sections/data-attributes) for the full scoping pattern.
+  </Step>
+  <Step title="Settings and blocks declared in the schema">
+    The schema is the **contract with the editor**. Without it, shoppers have no way to configure the section. See [Schema reference](/sections/schema-reference) for all supported setting types.
+  </Step>
+</Steps>
+
+## How a section is rendered
+
+```
+1. Shopper opens a store page
+2. Engine loads the ordered section list for that page
+3. For each section:
+   ├── Resolves template.liquid (from theme or component-library)
+   ├── Builds the `section` context:
+   │     section.id        → unique instance ID
+   │     section.type      → type (e.g. "hero-banner")
+   │     section.settings  → values saved by the shopper
+   │     section.blocks    → configured blocks
+   ├── Renders Liquid → HTML
+   └── Extracts {% style %} / {% javascript %} → injects into <head>/<body>
+4. Final HTML is assembled in content_for_layout and rendered via theme.liquid
+5. Backend injects <script src="/assets/sections/corvex-*.js" defer> for each registered type
+6. In the browser, window.CorvexSections finds [data-section-type] → calls the init function
+```
+
+## What is NOT a section
+
+| Concept | Description |
+|---|---|
+| **Snippets** | Liquid fragments (`{% render 'snippet' %}`) with no schema and no JavaScript lifecycle. Use snippets to share HTML between sections. |
+| **Templates** | Files in `templates/*.liquid` describe the structure of an entire page, not a reusable block. |
+| **Layout** | `layout/theme.liquid` is the HTML root that wraps every page. |
+
+## When to create a new section
+
+| Situation | What to do |
+|---|---|
+| Shopper wants to configure text, colors, or images in a content block | Create a theme section (`sections/{name}/`). |
+| Shopper wants repeatable blocks (testimonials, FAQ, timeline) | Theme section + `blocks` in the schema. |
+| You need interactivity (modal, carousel, add-to-cart, filters) | Registry section with a JS bundle. |
+| You need HTML shared between sections without any editor UI | Snippet. |
+| You need a brand-new page type (search, account) | Page template. |
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Anatomy of a section" icon="cube" href="/sections/anatomy">
+    The files that make up a section and how they connect at render time.
+  </Card>
+  <Card title="Data attribute conventions" icon="tag" href="/sections/data-attributes">
+    The required and optional attributes that drive lifecycle, editor, and event delegation.
+  </Card>
+  <Card title="Schema reference" icon="brackets-curly" href="/sections/schema-reference">
+    Every supported setting type with examples and Liquid consumption patterns.
+  </Card>
+  <Card title="Lifecycle hooks" icon="recycle" href="/sections/lifecycle">
+    The mount, update, and destroy hooks explained.
+  </Card>
+  <Card title="Create a section guide" icon="hammer" href="/guides/create-section">
+    Step-by-step walkthrough to build your first section.
+  </Card>
+  <Card title="Built-in library" icon="box" href="/sections/built-in-library">
+    Ready-to-use sections that ship with Corvex Store.
+  </Card>
+</CardGroup>

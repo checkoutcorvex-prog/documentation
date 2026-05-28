@@ -1,0 +1,195 @@
+---
+title: "Templates: page types and available Liquid variables"
+description: "How Corvex Store page templates work, every Liquid variable available in templates, and which variables are injected per page type."
+---
+
+Templates in Corvex Store are Liquid files that define the structure of a specific page type. The engine renders the correct template based on the URL being visited, injecting all relevant context variables before handing the file to the Liquid renderer. You don't fetch data in templates — the engine detects which section types are on the page and runs the necessary queries automatically.
+
+## How templates map to pages
+
+Each file in `templates/` corresponds to a page type:
+
+| File | Page type |
+|---|---|
+| `templates/index.liquid` | Home page |
+| `templates/product.liquid` | Product detail pages |
+| `templates/collection.liquid` | Collection / category pages |
+| `templates/page.liquid` | Generic content pages |
+| `templates/search.liquid` | Search results |
+| `templates/cart.liquid` | Shopping cart |
+| `templates/404.liquid` | Not-found error page |
+
+If no template file exists for a given page type, the engine falls back to the section list stored in the database and renders those sections directly.
+
+A minimal product template looks like this:
+
+```liquid
+{# templates/product.liquid #}
+{% section 'product-details' %}
+{% section 'recommended-products' %}
+```
+
+## Variables available in all templates
+
+### `shop` — store information
+
+```liquid
+{{ shop.id }}              {# Store ID #}
+{{ shop.name }}            {# Store display name #}
+{{ shop.url }}             {# Base URL: /store/{storeId} #}
+{{ shop.secure_url }}      {# Secure base URL #}
+{{ shop.currency }}        {# e.g., "USD" #}
+{{ shop.money_format }}    {# e.g., "${{amount}}" #}
+```
+
+### `request` — current request context
+
+```liquid
+{{ request.path }}               {# Current path: "/products" #}
+{{ request.page_type }}          {# "index", "product", "collection", "page", "search" #}
+{{ request.locale.iso_code }}    {# e.g., "en-US" #}
+{{ request.is_editor }}          {# true when viewed in the visual editor #}
+```
+
+### `settings` — global theme settings
+
+```liquid
+{{ settings.color_primary }}    {# e.g., "#1a1a2e" #}
+{{ settings.color_accent }}     {# e.g., "#e63946" #}
+{{ settings.font_heading }}     {# e.g., "Poppins" #}
+{{ settings.font_body }}        {# e.g., "Inter" #}
+{{ settings.font_size_base }}   {# e.g., 16 #}
+{{ settings.border_radius }}    {# e.g., 8 #}
+```
+
+These values come from `config/settings_data.json`. See [Settings and data](/themes/settings-data) for how to declare and configure them.
+
+### `seo` — page metadata
+
+```liquid
+{{ seo.title }}
+{{ seo.description }}
+{{ seo.og_image }}
+{{ seo.canonical_url }}
+{{ seo.robots }}           {# e.g., "index, follow" #}
+```
+
+### `products` — product list
+
+When a page includes sections that require product data, the engine automatically queries and injects a `products` array:
+
+```liquid
+{% for product in products %}
+  <div>{{ product.name }} — {{ product.pricing.price | money }}</div>
+{% endfor %}
+```
+
+The full product object shape:
+
+```liquid
+product.id
+product.name
+product.slug
+product.description
+product.shortDescription
+product.status                  {# "ACTIVE" or "DRAFT" #}
+product.featured                {# true | false #}
+product.pricing.price
+product.pricing.compareAtPrice
+product.pricing.currency
+product.media.images[0].url
+product.media.images[0].isFeatured
+product.variants
+product.options
+product.categories[0].name
+product.categories[0].slug
+```
+
+### `categories` — store categories
+
+`categories` is always available on every page type:
+
+```liquid
+{% for category in categories %}
+  <a href="/category/{{ category.slug }}">
+    {{ category.name }} ({{ category.productsCount }})
+  </a>
+{% endfor %}
+```
+
+### `discount_ranges` — active discount tiers
+
+`discount_ranges` is always available on every page type:
+
+```liquid
+{% for range in discount_ranges %}
+  {% if range.isActive %}
+    Buy {{ range.min_quantity }}+ and save {{ range.discount_percentage }}% off
+  {% endif %}
+{% endfor %}
+```
+
+### `routes` — store URL helpers
+
+```liquid
+{{ routes.root_url }}                    {# "/" #}
+{{ routes.cart_url }}                    {# "/cart" #}
+{{ routes.cart_add_url }}                {# "/cart/add" #}
+{{ routes.search_url }}                  {# "/search" #}
+{{ routes.product_recommendations_url }} {# "/recommendations/products" #}
+```
+
+## Variables injected by page type
+
+Some variables are only available on specific page types:
+
+| Variable | Available on |
+|---|---|
+| `product` | Pages with `page_type = "product"` |
+| `collection` | Pages with `page_type = "collection"` |
+| `products` | Any page with a section that queries products |
+| `categories` | All page types |
+| `discount_ranges` | All page types |
+
+## The `content_for_header` and `content_for_layout` slots
+
+These two tags belong in `layout/theme.liquid`, not in individual templates, but they are part of what makes templates work. The engine populates both at render time:
+
+```liquid
+{# In <head> — injects critical CSS, SEO meta tags, preload hints #}
+{{ content_for_header }}
+
+{# In <body> — injects the rendered HTML of all page sections #}
+{{ content_for_layout }}
+```
+
+See [Layout](/themes/layout) for the full details.
+
+## Automatic data injection
+
+The engine detects which section types are present on the current page before rendering begins. If a page contains a `product-grid` section, the engine runs the product query and makes `products` available in the template context automatically. This means:
+
+- You never write explicit data-fetch calls in templates
+- All sections on a page share the same request-scoped data cache
+- Redundant queries for the same data are deduplicated automatically
+
+<Tip>
+Keep templates thin. If you find yourself writing complex Liquid logic directly in a template file, move that logic into a section or snippet where it can be reused and tested independently.
+</Tip>
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="Layout" icon="layout-panel-top" href="/themes/layout">
+    The `theme.liquid` file that wraps every template.
+  </Card>
+  <Card title="Global data objects" icon="database" href="/data/global-objects">
+    Full reference for `shop`, `request`, `routes`, and `seo`.
+  </Card>
+  <Card title="Product data" icon="package" href="/data/product">
+    Complete product object schema for use in templates and sections.
+  </Card>
+  <Card title="Sections overview" icon="cube" href="/sections/overview">
+    Build configurable components that templates render.
+  </Card>
+</CardGroup>

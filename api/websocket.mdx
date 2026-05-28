@@ -1,0 +1,353 @@
+---
+title: "WebSocket API — live preview events via Socket.IO"
+description: "Connect to the Corvex Store Socket.IO server to receive real-time section updates, theme changes, and publish events that power the visual editor's live preview."
+---
+
+The Corvex Store WebSocket API powers the live preview in the visual editor. When you change a section setting or a theme color, the editor sends the change to the server, which re-renders the affected component and emits an event back to the preview iframe — all without a page reload. This page covers the Socket.IO endpoints, available events in both directions, connection setup, reconnection behavior, and debugging tips.
+
+## Endpoints
+
+| Environment | URL |
+|---|---|
+| Development | `ws://localhost:3000/socket.io` |
+| Production | `wss://render.corvex.store/socket.io` |
+
+## Connecting
+
+Use the official Socket.IO client. Pass your store and page context in the connection query:
+
+```html
+<script src="/socket.io/socket.io.js"></script>
+<script>
+  const socket = io({
+    query: {
+      storeId: 'store_abc',
+      role:    'editor',   // 'editor' or 'preview'
+      pageId:  'page_xyz',
+    },
+  });
+</script>
+```
+
+Or with the npm package:
+
+```javascript
+import { io } from 'socket.io-client';
+
+const socket = io('wss://render.corvex.store', {
+  query: {
+    storeId: 'store_abc',
+    role:    'preview',
+    pageId:  'page_xyz',
+  },
+});
+```
+
+<Note>
+The WebSocket connection is used inside the preview iframe and the editor shell. Connections from origins other than `https://app.usecorvex.com.br` are rejected by the server.
+</Note>
+
+## Rooms
+
+The server partitions clients into rooms so that events are delivered only to relevant connections:
+
+| Room | Who receives events |
+|---|---|
+| `store:<storeId>` | All clients connected to a store |
+| `page:<pageId>` | Clients viewing a specific page |
+| `editor:<userId>` | The editor sockets for a specific user |
+
+Join and leave page rooms as the user navigates:
+
+```javascript
+// Join a page room to receive section updates for that page
+socket.emit('join-page', { pageId: 'page_xyz' });
+
+// Leave before switching to another page
+socket.emit('leave-page', { pageId: 'page_xyz' });
+```
+
+## Events: server → client
+
+These are the events your client receives from the Corvex backend.
+
+### `preview-update`
+
+Fired when a page section has been re-rendered — after a setting change, a section add/remove, or a reorder.
+
+**Payload:**
+
+```typescript
+{
+  type:       'full' | 'section';
+  pageId:     string;
+  sectionId?: string;    // present when type === 'section'
+  html:       string;    // rendered HTML
+  cssExtra?:  string;    // CSS to inject into <head>
+  scripts?:   string[];  // additional bundle URLs (new section)
+  timestamp:  number;
+}
+```
+
+**Handling in the preview iframe:**
+
+```javascript
+socket.on('preview-update', (data) => {
+  if (data.type === 'section') {
+    const existing = document.querySelector(`[data-section-id="${data.sectionId}"]`);
+    if (!existing) return;
+
+    const temp = document.createElement('div');
+    temp.innerHTML = data.html;
+    const updated = temp.firstElementChild;
+
+    existing.replaceWith(updated);
+    // CorvexSections MutationObserver runs destroy() on old, mount() on new
+  }
+
+  if (data.type === 'full') {
+    document.querySelector('main').innerHTML = data.html;
+  }
+});
+```
+
+### `theme-settings-applied`
+
+Confirms that a global theme settings change has been applied on the server.
+
+**Payload:**
+
+```typescript
+{
+  storeId:   string;
+  settings:  Record<string, string | number | boolean>;
+  timestamp: number;
+}
+```
+
+**Updating CSS variables without a reload:**
+
+```javascript
+socket.on('theme-settings-applied', (data) => {
+  Object.entries(data.settings).forEach(([key, value]) => {
+    if (key.startsWith('color_') || key.startsWith('font_')) {
+      document.documentElement.style.setProperty(`--${key}`, String(value));
+    }
+  });
+});
+```
+
+### `section-added`
+
+Fired when a new section is added to a page.
+
+```typescript
+{
+  pageId:  string;
+  section: { id: string; type: string; settings: object; position: number };
+  html:    string;
+}
+```
+
+### `section-removed`
+
+Fired when a section is removed from a page.
+
+```typescript
+{
+  pageId:    string;
+  sectionId: string;
+}
+```
+
+### `section-reordered`
+
+Fired when sections on a page are reordered.
+
+```typescript
+{
+  pageId: string;
+  order:  string[];   // section IDs in new order
+}
+```
+
+### `prerender-completed`
+
+Fired after a successful publish. Use this to show a "Theme published" confirmation in the editor UI.
+
+```typescript
+{
+  storeId:       string;
+  versionId:     string;
+  pagesRendered: number;
+  duration:      number;   // milliseconds
+}
+```
+
+```javascript
+socket.on('prerender-completed', (data) => {
+  showToast(`Published! ${data.pagesRendered} pages rendered in ${data.duration}ms`);
+});
+```
+
+### `error`
+
+Sent when a server-side error needs to reach the client (for example, a render failure on a section).
+
+```typescript
+{
+  code:       'RENDER_ERROR' | 'VALIDATION_ERROR' | string;
+  message:    string;
+  details?:   unknown;
+  sectionId?: string;
+}
+```
+
+## Events: client → server
+
+These are the events you emit from the editor to trigger server actions.
+
+### `theme-settings-update`
+
+Emit when a user changes a global theme setting (color, font, etc.). The server applies the change, re-renders affected output, and emits `preview-update` followed by `theme-settings-applied`.
+
+```javascript
+socket.emit('theme-settings-update', {
+  storeId: 'store_abc',
+  changes: {
+    color_primary: '#6366f1',
+    font_heading:  'Poppins',
+  },
+});
+```
+
+### `join-page`
+
+Subscribe to updates for a specific page.
+
+```javascript
+socket.emit('join-page', { pageId: 'page_xyz' });
+```
+
+### `leave-page`
+
+Unsubscribe from page updates. Call this before switching to a different page.
+
+```javascript
+socket.emit('leave-page', { pageId: 'page_xyz' });
+```
+
+## Typical flow: edit setting → see live preview
+
+This is the full sequence for a single setting change in the editor:
+
+```
+1. User edits a setting in the right sidebar.
+
+2. Editor debounces for 250ms, then sends:
+   PATCH /api/stores/:storeId/pages/:pageId/sections/:sectionId
+   Body: { settings: { title: 'New title' } }
+
+3. Server:
+   - Saves the change to the draft.
+   - Re-renders only that section.
+   - Emits to room page:<pageId>:
+     preview-update { type: 'section', sectionId, html }
+
+4. Preview iframe receives preview-update:
+   - Replaces the section's DOM node.
+   - MutationObserver triggers: destroy() on old section, mount() on new one.
+
+5. Editor receives the 200 OK from PATCH and updates local state.
+```
+
+<Note>
+WebSocket preview events bypass all caches — every event triggers a full re-render of the section to guarantee the editor always sees fresh output.
+</Note>
+
+## Reconnection
+
+Socket.IO handles reconnection automatically. Configure it explicitly if you need control over the backoff behavior:
+
+```javascript
+const socket = io('wss://render.corvex.store', {
+  reconnection:         true,
+  reconnectionDelay:    1000,
+  reconnectionDelayMax: 5000,
+  query: { storeId: 'store_abc', role: 'preview', pageId: 'page_xyz' },
+});
+
+socket.on('connect',    () => console.log('Connected'));
+socket.on('disconnect', () => console.log('Disconnected'));
+socket.on('reconnect',  () => {
+  // Re-join any page rooms after reconnection
+  socket.emit('join-page', { pageId: currentPageId });
+});
+```
+
+## Debugging
+
+<AccordionGroup>
+  <Accordion title="Log all events in the console">
+
+```javascript
+socket.onAny((event, ...args) => {
+  console.log('[WS]', event, args);
+});
+```
+
+  </Accordion>
+  <Accordion title="Inspect events in Chrome DevTools">
+
+Open **DevTools → Network**, filter by `ws`, click the connection entry, then open the **Messages** tab to see the raw event stream.
+
+  </Accordion>
+  <Accordion title="Measure round-trip latency">
+
+```javascript
+const start = Date.now();
+socket.emit('ping');
+socket.once('pong', () => {
+  console.log('RTT:', Date.now() - start, 'ms');
+});
+```
+
+  </Accordion>
+  <Accordion title="Simulate a disconnect and reconnect">
+
+```javascript
+socket.disconnect();
+
+setTimeout(() => {
+  socket.connect();
+}, 3000);
+```
+
+  </Accordion>
+</AccordionGroup>
+
+<Warning>
+Keep these edge cases in mind:
+
+- The WebSocket client lives **inside the preview iframe**, not in the parent editor window. Do not confuse the two scopes.
+- Always call `leave-page` before `join-page` when the user navigates to a different page. Otherwise you receive events from both pages.
+- Full-page `preview-update` events can carry 100 KB or more of HTML. Handle them promptly to avoid message backlog.
+- In development, Next.js HMR can drop the connection when you save a file. This is expected behavior, not a bug.
+</Warning>
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="API overview" icon="map" href="/api/overview">
+    Base URL, authentication, and HTTP conventions.
+  </Card>
+  <Card title="Sections — lifecycle" icon="refresh-cw" href="/sections/lifecycle">
+    How mount() and destroy() integrate with WebSocket DOM swaps.
+  </Card>
+  <Card title="Webhooks" icon="webhook" href="/api/webhooks">
+    Server-to-server event notifications for orders and cart events.
+  </Card>
+  <Card title="Common issues" icon="triangle-alert" href="/debug/common-issues">
+    Troubleshoot preview not updating and connection errors.
+  </Card>
+</CardGroup>

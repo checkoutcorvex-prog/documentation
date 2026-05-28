@@ -1,0 +1,249 @@
+---
+title: "Section Registry: window.CorvexSections API Reference"
+description: "Use window.CorvexSections to register, initialize, update, and destroy sections — MutationObserver behavior, duplicate detection, full API, and debug tools."
+---
+
+`window.CorvexSections` is a global singleton that orchestrates the entire JavaScript lifecycle of sections in the browser. It stores init functions, finds section elements in the DOM, calls those functions at the right time, and cleans up when elements are removed. You interact with it whenever you register a section or debug the runtime state.
+
+<Info>
+`window.CorvexSections` is injected automatically by the editor runtime. You never need to import or instantiate it — just call `window.CorvexSections.register()` from your section bundle.
+</Info>
+
+## Registering a section
+
+There are three accepted forms. Choose the one that fits your section's complexity.
+
+### Form A — function with cleanup (simple sections)
+
+```typescript
+import { CorvexSections } from '@/lib/corvex-sections';
+
+CorvexSections.register('counter', (el) => {
+  const btn = el.querySelector<HTMLButtonElement>('[data-ref="btn"]');
+  if (!btn) return;
+
+  const handleClick = () => {
+    btn.textContent = String(Number(btn.textContent) + 1);
+  };
+
+  btn.addEventListener('click', handleClick);
+
+  return () => {
+    btn.removeEventListener('click', handleClick);
+  };
+});
+```
+
+Returning a function is enough — the registry calls it as the cleanup when the section leaves the DOM.
+
+### Form B — object with `update` and `destroy`
+
+Use this when you want to preserve state during editor hot updates (the element was patched with new settings without being destroyed):
+
+```typescript
+CorvexSections.register('slideshow', (el) => {
+  const state = { currentSlide: 0, autoplay: null as number | null };
+
+  function mount(root: HTMLElement) { /* setup listeners, start autoplay */ }
+  function destroy() { if (state.autoplay) clearInterval(state.autoplay); }
+
+  mount(el);
+
+  return {
+    update(newEl: HTMLElement) {
+      destroy();
+      mount(newEl);
+    },
+    destroy,
+  };
+});
+```
+
+### Form C — `BaseSection` + `defineSection` (recommended for new sections)
+
+See [BaseSection](/sections/base-section) for full documentation. Under the hood, `defineSection()` uses Form B.
+
+## Where to register your section
+
+The **only** place where section imports should live is `packages/editor-frontend/src/lib/corvex-sections-init.ts`:
+
+```typescript
+// corvex-sections-init.ts
+import { CorvexSections } from './corvex-sections';
+
+import './sections/product-details-full';
+import './sections/header';
+import './sections/product-grid';
+import './sections/slideshow';
+import './sections/cart-details';
+import './sections/collection-list';
+
+// Add your custom sections here:
+// import './sections/newsletter';
+```
+
+<Warning>
+One section type = one registration file. Importing the same type in two files (e.g., `product-details.ts` and `product-details-full.ts`) causes warnings and unpredictable lifecycle behavior.
+</Warning>
+
+## Idempotency
+
+Duplicate calls to `register` with the same type are **silently ignored** (with a warning in development):
+
+```typescript
+CorvexSections.register('slideshow', fnV1);
+CorvexSections.register('slideshow', fnV2); // ignored; fnV1 stays active
+```
+
+This prevents HMR, duplicate imports, or React StrictMode from silently replacing the init function while active instances still hold a reference to the old one.
+
+To force a replacement (useful in tests or HMR tooling):
+
+```typescript
+CorvexSections.forceRegister('slideshow', fnV2);
+```
+
+## How initialization works
+
+The full flow from bundle load to `mount()` executing:
+
+```
+1. Browser loads <script src="/assets/sections/corvex-slideshow.js" defer>
+2. The bundle calls CorvexSections.register('slideshow', initFn) — idempotent.
+3. Concurrently, safeInitSections() is called (via StoreInteractivity).
+4. CorvexSections.initAllSections() scans the DOM:
+     document.querySelectorAll('[data-section-type]')
+5. For each element:
+     a. Checks if already initialized (triple guard)
+     b. Checks for duplicate data-section-id
+     c. Retrieves initFn from the registry
+     d. Calls initFn(el) inside try/catch
+     e. Sets el.dataset.sectionInitialized = "true"
+     f. Stores the instance in a Map
+6. MutationObserver begins watching for DOM changes:
+     - New [data-section-type] → automatic init
+     - Removed [data-section-initialized] → automatic destroy
+```
+
+### Triple guard against double-init
+
+`initSection` checks three independent sources before initializing:
+
+1. **Instance Map** (`this.instances`) — the runtime source of truth.
+2. **Element flag** (`el.__corvexInitialized`) — survives Map resets during HMR.
+3. **DOM attribute** (`data-section-initialized="true"`) — visible in DevTools.
+
+Any one of the three being positive aborts the re-initialization.
+
+### Duplicate detection
+
+When two elements share the same `data-section-id` on the page (likely a backend or HTML injection bug):
+
+```
+🚨 DUPLICATE SECTION DETECTED — data-section-id="banner-xyz" appears twice in the DOM.
+   Initializing only the first occurrence; duplicates will be ignored.
+```
+
+The engine marks duplicates with `data-section-duplicate-ignored="true"` and skips them — preventing bugs where counts jump by two.
+
+## MutationObserver
+
+`CorvexSections.startObserver()` is called automatically during `init()`. It watches `document.body` for subtree changes:
+
+```
+MutationObserver (body, subtree, childList)
+  ├── Element added with [data-section-type]
+  │     → calls initSection(el)
+  │
+  └── Element removed with [data-section-initialized]
+        → verifies element is truly gone from document.body
+        → calls destroySection(el, force=true)
+```
+
+Key behaviors:
+
+- **150 ms debounce** to batch multiple mutations together.
+- Ignores mutations during bulk initialization to prevent loops.
+- Before destroying, verifies that the element is truly absent from `document.body` (React can move elements without removing them).
+
+This is what enables the editor's **hot updates without a reload** — when a shopper changes a setting, the backend emits new HTML via WebSocket, React patches the DOM, and the observer automatically reinitializes affected sections.
+
+## Full API reference
+
+```typescript
+// Register types
+CorvexSections.register(type, initFn)
+CorvexSections.forceRegister(type, initFn)   // replaces (use with care)
+CorvexSections.has(type)                     // → boolean
+
+// Initialize / destroy individual sections
+CorvexSections.initSection(el)               // → boolean
+CorvexSections.destroySection(el, force?)
+CorvexSections.updateSection(el, newEl?)     // calls instance.update
+
+// Batch operations
+CorvexSections.initAllSections()             // scans document.body
+CorvexSections.initSectionsInContainer(el)  // scans only el
+
+// Observer control
+CorvexSections.startObserver()
+CorvexSections.stopObserver()
+
+// Runtime lifecycle
+CorvexSections.init({ skipInitialScan?: boolean })
+CorvexSections.destroy()                     // tears down everything
+
+// Debug
+CorvexSections.getDebugInfo()
+// → { registeredTypes, activeInstances, instancesByType, observerActive, oldestInstance }
+
+// Scoped DOM helpers
+CorvexSections.find(el, selector)            // safe querySelector
+CorvexSections.findAll(el, selector)         // safe querySelectorAll
+```
+
+## Debugging in DevTools
+
+Paste these snippets into the browser console to inspect the runtime:
+
+```javascript
+// List all registered types and active instances
+window.CorvexSections.getDebugInfo();
+
+// Inspect a specific section
+const el = document.querySelector('[data-section-id="banner-xyz"]');
+console.log(el.dataset);
+// → { sectionType: "banner", sectionId: "banner-xyz", sectionInitialized: "true" }
+
+// Find all failed sections
+document.querySelectorAll('[data-section-failed]').forEach(el => {
+  console.log(el.dataset.sectionType, el.dataset.sectionError);
+});
+
+// Force re-initialize a section
+window.CorvexSections.destroySection(el, true);
+window.CorvexSections.initSection(el);
+```
+
+In development (`NODE_ENV=development`), the registry logs **all events** — register, init, destroy, duplicate — with the prefix `[CorvexSections]`.
+
+## Server-side rendering behavior
+
+`corvex-sections.ts` creates a **dummy no-op instance** when `typeof window === 'undefined'`. Registry calls in SSR context do nothing and do not throw. All real logic runs only in the browser after `window` is available.
+
+## Editor integration
+
+When a shopper edits a setting in the right panel:
+
+```
+1. Editor sends PUT /api/stores/:storeId/sections/:sectionId
+2. Backend invalidates caches
+3. Backend re-renders the page (draft) with the new settings
+4. Editor receives new HTML via WebSocket (preview-update)
+5. React patches the iframe DOM:
+     - Modified sections → MutationObserver → destroy + init
+     - Untouched sections → ignored (internal state preserved)
+6. (Optional) updateSection(el, newEl) is called for sections that implement update
+```
+
+See [Lifecycle](/sections/lifecycle) for how this maps to your `mount`, `update`, and `destroy` hooks.

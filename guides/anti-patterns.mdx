@@ -1,0 +1,616 @@
+---
+title: "Anti-Patterns to Avoid in Corvex Themes"
+description: "Twenty common mistakes when building Corvex sections and themes, with bad-code examples, explanations of the harm, and the correct pattern."
+---
+
+Every pattern on this page represents a real bug category encountered in Corvex Store themes. Some cause visual glitches, some cause JavaScript errors, and some create subtle production issues that only appear under specific conditions. Review this list before opening a pull request — catching these early saves hours of debugging.
+
+<Info>
+This page covers the most common errors found in Corvex themes. For quick one-line diagnoses, see [Common Issues](/debug/common-issues). For ready-made boilerplates that follow the correct patterns, see [Templates](/guides/templates).
+</Info>
+
+---
+
+## 1. Unscoped CSS selectors
+
+**What goes wrong:** CSS inside `{% style %}` is injected into the shared `<head>`. Selectors without a `section.id` prefix leak across the entire page and collide with other sections — especially when the same section type is used twice.
+
+<CodeGroup>
+```liquid Bad
+{% style %}
+  .title { color: red; font-size: 2rem; }
+  h1 { text-transform: uppercase; }
+{% endstyle %}
+```
+
+```liquid Good
+{% style %}
+  .hero-{{ section.id }} .title {
+    color: red;
+    font-size: 2rem;
+  }
+
+  .hero-{{ section.id }} h1 {
+    text-transform: uppercase;
+  }
+{% endstyle %}
+```
+</CodeGroup>
+
+---
+
+## 2. Using CSS class names as JavaScript selectors
+
+**What goes wrong:** Classes are for styling. If a designer renames a class, the JavaScript breaks silently. Using `.querySelector('.add-to-cart')` also fails to distinguish between multiple instances of the same section on a page.
+
+<CodeGroup>
+```typescript Bad
+class MySection extends BaseSection {
+  mount() {
+    this.el.querySelector('.add-to-cart')?.addEventListener('click', this.buy);
+  }
+}
+```
+
+```liquid Good — template
+<button data-ref="buy-button" data-action="buy">Buy now</button>
+```
+
+```typescript Good — TypeScript
+mount() {
+  this.delegate('click', {
+    'buy': () => this.buy(),
+  });
+}
+```
+</CodeGroup>
+
+`data-ref` and `data-action` are explicit contracts between HTML and JavaScript. See [Data Attributes](/sections/data-attributes).
+
+---
+
+## 3. Using document.querySelector inside a section
+
+**What goes wrong:** `document.querySelectorAll('.slide')` selects elements from every section on the page. With two instances of the same section, click events fire twice — once for each instance — because both are listening to the same global elements.
+
+<CodeGroup>
+```typescript Bad
+mount() {
+  const slides = document.querySelectorAll('.slide');
+  slides.forEach(s => s.addEventListener('click', this.next));
+}
+```
+
+```typescript Good
+mount() {
+  // Both options are scoped to this instance only
+  const slides = this.refs<HTMLElement>('slide');
+  // OR:
+  const alt = this.$$('[data-ref="slide"]');
+}
+```
+</CodeGroup>
+
+---
+
+## 4. Inline onclick with deferred scripts
+
+**What goes wrong:** `defer` delays script execution until after the HTML is fully parsed. If a user clicks an `onclick` button before the deferred script loads — easy on slow connections — the function does not exist yet and throws a `ReferenceError`.
+
+<CodeGroup>
+```liquid Bad
+<button onclick="addToCart('{{ variant.id }}')">Buy</button>
+<script src="{{ 'theme.js' | asset_url }}" defer></script>
+```
+
+```liquid Good — prefer data-action
+<button data-action="add-to-cart" data-variant-id="{{ variant.id }}">Buy</button>
+```
+
+```typescript Good — TypeScript
+this.delegate('click', {
+  'add-to-cart': (trigger) => this.addToCart(trigger.dataset.variantId!),
+});
+```
+</CodeGroup>
+
+If you must use `onclick` for compatibility with imported themes, place the function definition in a small critical script loaded in `<head>` **without** `defer`. See [Performance Overview](/performance/overview) for the hybrid JS strategy.
+
+---
+
+## 5. Missing cleanup in destroy
+
+**What goes wrong:** In the editor, sections remount on every hot update. Without cleanup, each update adds another timer or event listener. After ten edits, ten `setInterval` calls are firing simultaneously, causing CPU spikes and unpredictable behavior.
+
+<CodeGroup>
+```typescript Bad
+mount() {
+  this.timer = setInterval(() => this.next(), 5000);
+  window.addEventListener('resize', this.onResize);
+  // no destroy() — timer and listener accumulate
+}
+```
+
+```typescript Good
+mount() {
+  const id = setInterval(() => this.next(), 5000);
+  this.addCleanup(() => clearInterval(id));
+
+  this.on(window, 'resize', this.onResize);
+  // this.on() registers cleanup automatically
+}
+```
+</CodeGroup>
+
+See [Lifecycle](/sections/lifecycle) for the full `mount`, `update`, and `destroy` contract.
+
+---
+
+## 6. Fetching data inside a Liquid template
+
+**What goes wrong:** A `<script>` tag fetching data inside a Liquid template causes flash of unstyled content, high CLS, no SEO visibility, and bypasses the backend's data-caching layer. The Corvex engine resolves data server-side before rendering — use that instead.
+
+<CodeGroup>
+```liquid Bad
+<script>
+  fetch('/api/stores/xyz/products')
+    .then(r => r.json())
+    .then(data => {
+      document.querySelector('.grid').innerHTML = data.map(p => `<div>${p.name}</div>`).join('');
+    });
+</script>
+```
+
+```liquid Good
+<div class="grid">
+  {% for product in products %}
+    {% render 'product-card', product: product %}
+  {% endfor %}
+</div>
+```
+</CodeGroup>
+
+If the data is genuinely user-specific and dynamic (cart, personalized recommendations), fetch it from the section's TypeScript class — not from a script block in the Liquid template:
+
+```typescript
+private async loadRecommendations() {
+  const res = await fetch(`/api/stores/${window.__STORE_ID__}/recommendations`);
+  const data = await res.json();
+  this.renderCards(data.products);
+}
+```
+
+---
+
+## 7. Static id attributes inside sections
+
+**What goes wrong:** HTML `id` values must be unique per page. When a merchant adds two instances of the same section, the DOM contains duplicate IDs, which is invalid HTML. `document.getElementById('open-modal')` returns an unpredictable element.
+
+<CodeGroup>
+```liquid Bad
+<section data-section-type="hero">
+  <button id="open-modal">Open</button>
+</section>
+```
+
+```liquid Good
+{% comment %} For accessibility (label for, aria-labelledby): {% endcomment %}
+<label for="email-{{ section.id }}">Email</label>
+<input id="email-{{ section.id }}" type="email">
+
+{% comment %} For JavaScript: use data-ref instead {% endcomment %}
+<button data-ref="open-btn">Open</button>
+```
+</CodeGroup>
+
+---
+
+## 8. Global variables for section state
+
+**What goes wrong:** Module-level variables are shared across every instance of the section. When two instances exist on the same page, clicking "next" in one carousel advances the other as well.
+
+<CodeGroup>
+```typescript Bad
+let currentSlide = 0; // shared across all instances
+
+class Slideshow extends BaseSection {
+  mount() {
+    this.delegate('click', {
+      'next': () => { currentSlide++; this.render(); },
+    });
+  }
+}
+```
+
+```typescript Good
+class Slideshow extends BaseSection {
+  private currentSlide = 0; // instance field — isolated per instance
+
+  mount() {
+    this.delegate('click', {
+      'next': () => { this.currentSlide++; this.render(); },
+    });
+  }
+}
+```
+</CodeGroup>
+
+---
+
+## 9. Directly manipulating another section's DOM
+
+**What goes wrong:** Querying elements in a sibling section couples two independent components. If the other section changes its markup, this code breaks silently. It also creates order-of-initialization dependencies.
+
+<CodeGroup>
+```typescript Bad
+class Header extends BaseSection {
+  updateCartBadge(count: number) {
+    document.querySelector('.cart-badge')!.textContent = count.toString();
+  }
+}
+```
+
+```typescript Good — use custom events
+// Sender
+window.dispatchEvent(new CustomEvent('corvex:cart:updated', {
+  detail: { count }
+}));
+
+// Receiver (CartBadge section)
+mount() {
+  this.on(window, 'corvex:cart:updated' as any, (e: CustomEvent) => {
+    const el = this.ref('count');
+    if (el) el.textContent = e.detail.count;
+  });
+}
+```
+</CodeGroup>
+
+---
+
+## 10. Not handling empty states
+
+**What goes wrong:** An empty `<h2></h2>` creates invisible whitespace. An `<img src="">` shows a broken image icon. An empty `<ul></ul>` leaves awkward padding in the layout. Merchants frequently leave settings empty when first adding a section.
+
+<CodeGroup>
+```liquid Bad
+<section>
+  <h2>{{ section.settings.title }}</h2>
+  <img src="{{ section.settings.image | img_url: '800x' }}">
+  <ul>
+    {% for block in section.blocks %}
+      <li>{{ block.settings.text }}</li>
+    {% endfor %}
+  </ul>
+</section>
+```
+
+```liquid Good
+<section>
+  {% if section.settings.title != blank %}
+    <h2>{{ section.settings.title }}</h2>
+  {% endif %}
+
+  {% if section.settings.image != blank %}
+    <img src="{{ section.settings.image | img_url: '800x' }}"
+         alt="{{ section.settings.image_alt }}"
+         loading="lazy">
+  {% endif %}
+
+  {% if section.blocks.size > 0 %}
+    <ul>
+      {% for block in section.blocks %}
+        <li>{{ block.settings.text }}</li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="empty-state">Add items in the editor.</p>
+  {% endif %}
+</section>
+```
+</CodeGroup>
+
+---
+
+## 11. Serving images at original dimensions
+
+**What goes wrong:** A product image can be 3000×3000 px at 2 MB. Serving it in a 200×200 card wastes bandwidth, increases LCP, and triggers Lighthouse warnings. The CDN can resize on demand — use `img_url`.
+
+<CodeGroup>
+```liquid Bad
+<img src="{{ product.images[0].url }}" alt="{{ product.name }}">
+```
+
+```liquid Good
+<img src="{{ product.images[0].url | img_url: '400x400' }}"
+     alt="{{ product.name }}"
+     loading="lazy"
+     width="400"
+     height="400">
+```
+</CodeGroup>
+
+Always provide `width` and `height` attributes. They prevent layout shift while the image loads. Use `loading="lazy"` for below-the-fold images and omit it (or use `fetchpriority="high"`) for hero images above the fold.
+
+---
+
+## 12. Setting innerHTML with unsanitized input
+
+**What goes wrong:** If any part of the string comes from user input, untrusted API data, or URL parameters, setting `innerHTML` directly opens an XSS vulnerability.
+
+<CodeGroup>
+```typescript Bad
+const userInput = form.value;
+this.el.innerHTML = `<p>You typed: ${userInput}</p>`;
+```
+
+```typescript Good
+const p = document.createElement('p');
+p.textContent = `You typed: ${userInput}`;
+this.el.appendChild(p);
+```
+</CodeGroup>
+
+If you must insert controlled HTML (not from user input), escape the dangerous characters first:
+
+```typescript
+const safe = input.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+el.innerHTML = `<p>${safe}</p>`;
+```
+
+---
+
+## 13. Registering the same section type in multiple files
+
+**What goes wrong:** The second `defineSection` call silently overwrites the first. You think you are using the original implementation, but the overriding version runs instead. Dead code accumulates.
+
+<CodeGroup>
+```typescript Bad
+// sections/slideshow.ts
+defineSection(SlideshowSection);
+
+// sections/slideshow-v2.ts  ← duplicate registration
+defineSection(SlideshowSection); // overwrites the first
+```
+
+```typescript Good
+// sections/slideshow.ts
+class SlideshowSection extends BaseSection {
+  static readonly type = 'slideshow';
+}
+defineSection(SlideshowSection);
+
+// sections/slideshow-stories.ts — separate type, separate file
+class SlideshowStoriesSection extends BaseSection {
+  static readonly type = 'slideshow-stories';
+}
+defineSection(SlideshowStoriesSection);
+```
+</CodeGroup>
+
+One section type = one registration file. See [Registry](/sections/registry).
+
+---
+
+## 14. Expecting the cart object in Liquid templates
+
+**What goes wrong:** `cart` does not exist in the Liquid rendering context. The cart is 100% client-side, stored in `localStorage`. Any template that references `{{ cart.lines.size }}` renders nothing.
+
+<CodeGroup>
+```liquid Bad
+<p>Your cart: {{ cart.totals.itemCount }} items</p>
+<p>Subtotal: {{ cart.totals.subtotal | money }}</p>
+```
+
+```liquid Good
+<section data-section-type="cart-details" data-section-id="{{ section.id }}">
+  <span data-ref="count">0</span>
+  <span data-ref="subtotal">$0.00</span>
+</section>
+```
+</CodeGroup>
+
+Use the built-in `cart-details` section or fetch cart state from JavaScript in your section's `mount()`. See [Cart](/data/cart).
+
+---
+
+## 15. Exposing secret API keys in templates
+
+**What goes wrong:** Any value rendered into the page HTML is visible to every visitor via View Source. Exposing a payment processor secret key or API secret compromises the account.
+
+<CodeGroup>
+```liquid Bad
+<script>
+  window.__API_KEY__ = '{{ settings.stripe_secret_key }}';
+</script>
+```
+
+```typescript Good — keep secrets on the backend
+// Frontend: request a short-lived token from your backend
+const res = await fetch(`/api/stores/${window.__STORE_ID__}/checkout-token`, {
+  method: 'POST',
+});
+const { token } = await res.json();
+// use token for the payment flow
+```
+</CodeGroup>
+
+Publishable or public keys (Stripe publishable key, analytics IDs) are safe to expose. Secret keys belong in server-side environment variables only.
+
+---
+
+## 16. Deleting schema settings that already have saved data
+
+**What goes wrong:** Merchants who configured a setting before the schema change have that value persisted in `settings_data.json`. Removing the setting from the schema does not delete the saved value, but if the template still references `section.settings.subtitle`, it renders as `blank` with no warning. If you add back the setting in the future, it may conflict.
+
+<CodeGroup>
+```json Bad — removing a setting
+{
+  "settings": [
+    { "type": "text", "id": "title", "label": "Title" }
+  ]
+}
+```
+
+```json Good — deprecate gracefully
+{
+  "settings": [
+    { "type": "text", "id": "title", "label": "Title" },
+    {
+      "type":    "text",
+      "id":      "subtitle",
+      "label":   "Subtitle (deprecated)",
+      "info":    "This field will be removed in v2. Use the new Lead field.",
+      "default": ""
+    }
+  ]
+}
+```
+</CodeGroup>
+
+Keep deprecated settings for at least one major version. Communicate the migration path to merchants before removing.
+
+---
+
+## 17. Blocking mount with async fetches
+
+**What goes wrong:** Writing `mount()` as `async` and awaiting a fetch at the top means the section is not considered ready until the network request completes. In the editor this makes the preview sluggish. It also delays any interaction that relies on the section being initialized.
+
+<CodeGroup>
+```typescript Bad
+async mount() {
+  const res = await fetch(this.options.endpoint);
+  const data = await res.json();
+  this.el.innerHTML = this.buildHTML(data);
+}
+```
+
+```typescript Good
+mount() {
+  this.renderSkeleton();
+  this.fetchAndUpdate();
+}
+
+private renderSkeleton() {
+  const content = this.ref('content');
+  if (content) content.innerHTML = '<div class="skeleton">Loading...</div>';
+}
+
+private async fetchAndUpdate() {
+  try {
+    const res = await fetch(this.options.endpoint);
+    if (!res.ok) throw new Error('Request failed');
+    const data = await res.json();
+    this.renderData(data);
+  } catch (e) {
+    console.error('[my-section] Failed to load data:', e);
+    this.renderError();
+  }
+}
+```
+</CodeGroup>
+
+---
+
+## 18. Testing with only one section instance
+
+**What goes wrong:** Most isolation bugs — CSS leakage, shared state, double-firing listeners — only appear when two or more instances of the same section exist on the same page. Testing a single instance gives false confidence.
+
+**Always test with two instances side by side before merging.** In the editor:
+
+1. Add the same section twice.
+2. Configure different settings in each.
+3. Interact with both (click buttons, edit settings).
+4. Confirm that neither instance affects the other visually or functionally.
+
+This is a mandatory step in the Corvex section review checklist.
+
+---
+
+## 19. Not checking availableForSale before the add-to-cart button
+
+**What goes wrong:** If the add-to-cart button is always enabled, users can attempt to add sold-out products. The API will reject the request, but the user experience is confusing and the error handling must cover a case that never should have been possible.
+
+<CodeGroup>
+```liquid Bad
+<button data-action="add-to-cart" data-variant-id="{{ variant.id }}">
+  Buy now
+</button>
+```
+
+```liquid Good
+<button data-action="add-to-cart"
+        data-variant-id="{{ variant.id }}"
+        {% if variant.availableForSale == false %}disabled{% endif %}>
+  {% if variant.availableForSale %}
+    Add to cart
+  {% else %}
+    Sold out
+  {% endif %}
+</button>
+```
+</CodeGroup>
+
+---
+
+## 20. Swallowing errors silently
+
+**What goes wrong:** A silent catch block means that when something breaks in production, there is no trace of what happened. Users report "it doesn't work" with no way to reproduce or diagnose.
+
+<CodeGroup>
+```typescript Bad
+try {
+  await this.fetchData();
+} catch (e) {
+  // silence — nothing logged
+}
+```
+
+```typescript Good
+try {
+  await this.fetchData();
+} catch (e) {
+  console.error('[my-section] Failed to fetch data:', e);
+
+  // Show feedback to the user
+  this.showError('Could not load content. Please try again in a moment.');
+
+  // Optional: send to telemetry if configured
+  if (window.corvexTelemetry) {
+    window.corvexTelemetry.captureException(e, { section: this.sectionId });
+  }
+}
+```
+</CodeGroup>
+
+---
+
+## Quick reference
+
+Eight rules that prevent most of these issues:
+
+1. **Classes are for CSS. `data-*` is for JavaScript.**
+2. **Scope every CSS rule with `section.id`.**
+3. **Always register cleanup for timers and global listeners.**
+4. **Fetch data server-side via Liquid, not via `<script>` tags in templates.**
+5. **Test with two instances before every merge.**
+6. **Deprecate settings — never delete them.**
+7. **Guard every variable against blank and null.**
+8. **Always log errors — never swallow them.**
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="Common Issues" icon="circle-exclamation" href="/debug/common-issues">
+    Symptom-to-fix reference for real errors
+  </Card>
+  <Card title="Lifecycle" icon="arrows-rotate" href="/sections/lifecycle">
+    Correct mount, update, and destroy patterns
+  </Card>
+  <Card title="Performance Overview" icon="gauge-high" href="/performance/overview">
+    How to write fast, efficient sections
+  </Card>
+  <Card title="Templates" icon="copy" href="/guides/templates">
+    Correct boilerplates to start from
+  </Card>
+</CardGroup>

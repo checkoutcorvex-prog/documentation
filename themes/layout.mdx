@@ -1,0 +1,233 @@
+---
+title: "Theme layout: structure your store's HTML shell"
+description: "How to write layout/theme.liquid for Corvex Store, use the required content_for_header and content_for_layout placeholders, and structure your HTML shell."
+---
+
+The layout file is the HTML shell that wraps every page your Corvex Store theme renders. It lives at `layout/theme.liquid` and is the single place where you control the global `<head>`, fonts, CSS variables, and JavaScript loading strategy. Getting it right has a direct impact on SEO, performance, and how well the visual editor integrates with your theme.
+
+## Minimum viable layout
+
+```liquid
+<!DOCTYPE html>
+<html lang="{{ shop.locale | default: 'en' }}">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    {{ content_for_header }}
+
+    <link rel="stylesheet" href="{{ 'theme.css' | asset_url }}">
+  </head>
+  <body>
+    {{ content_for_layout }}
+
+    <script src="{{ 'theme.js' | asset_url }}" defer></script>
+  </body>
+</html>
+```
+
+## Required placeholders
+
+### `{{ content_for_header }}`
+
+Place this tag inside `<head>`. The Corvex Store engine injects the following into this slot at render time:
+
+- Meta tags (title, description, Open Graph)
+- Critical CSS extracted from section `{% style %}` blocks
+- Scripts from sections that need to run in `<head>`
+- Preload hints for the page's LCP image
+
+```
+Error: Missing required placeholder: content_for_header
+```
+
+If you omit this tag, the engine throws the error above and the page will not render correctly.
+
+### `{{ content_for_layout }}`
+
+Place this tag inside `<body>`. The engine injects the fully rendered HTML of all page sections — header, content sections, and footer — into this slot.
+
+<Warning>
+Both `{{ content_for_header }}` and `{{ content_for_layout }}` are mandatory. A layout missing either one will fail to render properly and break SEO, styles, and section content.
+</Warning>
+
+## Complete layout with meta tags and CSS variables
+
+This is the recommended production pattern:
+
+```liquid
+<!DOCTYPE html>
+<html lang="{{ shop.locale | default: 'en' }}">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <title>{{ seo.title }}</title>
+    <meta name="description" content="{{ seo.description }}">
+    <link rel="canonical" href="{{ seo.canonical }}">
+
+    <!-- Open Graph -->
+    <meta property="og:title"       content="{{ seo.og.title }}">
+    <meta property="og:description" content="{{ seo.og.description }}">
+    <meta property="og:image"       content="{{ seo.og.image }}">
+    <meta property="og:url"         content="{{ seo.canonical }}">
+    <meta property="og:type"        content="{{ seo.og.type | default: 'website' }}">
+
+    <!-- Twitter -->
+    <meta name="twitter:card"        content="{{ seo.twitter.card | default: 'summary_large_image' }}">
+    <meta name="twitter:title"       content="{{ seo.twitter.title }}">
+    <meta name="twitter:description" content="{{ seo.twitter.description }}">
+    <meta name="twitter:image"       content="{{ seo.twitter.image }}">
+
+    {% if shop.favicon %}
+      <link rel="icon" href="{{ shop.favicon }}">
+    {% endif %}
+
+    <!-- Fonts — preconnect then stylesheet -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet"
+          href="https://fonts.googleapis.com/css2?family={{ settings.font_heading }}:wght@400;700&family={{ settings.font_body }}:wght@400;500&display=swap">
+
+    <!-- Global CSS -->
+    <link rel="stylesheet" href="{{ 'theme.css' | asset_url }}">
+
+    <!-- Global CSS variables from theme settings -->
+    <style>
+      :root {
+        --color-primary:   {{ settings.color_primary }};
+        --color-secondary: {{ settings.color_secondary }};
+        --color-bg:        {{ settings.color_bg }};
+        --color-text:      {{ settings.color_text }};
+        --font-heading:    '{{ settings.font_heading }}', sans-serif;
+        --font-body:       '{{ settings.font_body }}', sans-serif;
+      }
+    </style>
+
+    <!-- Critical JS (needed for onclick handlers) — no defer -->
+    <script src="{{ 'critical.js' | asset_url }}"></script>
+
+    {{ content_for_header }}
+  </head>
+
+  <body class="page-type-{{ request.page_type }}{% if request.is_editor %} is-editor{% endif %}">
+    {{ content_for_layout }}
+
+    <!-- Non-critical JS — deferred -->
+    <script src="{{ 'theme.js' | asset_url }}" defer></script>
+  </body>
+</html>
+```
+
+## Body utility classes
+
+Use `request.page_type` as a class on `<body>` to enable page-specific CSS without extra JavaScript:
+
+```liquid
+<body class="page-type-{{ request.page_type }}">
+```
+
+```css
+.page-type-product .header { background: transparent; }
+.page-type-index   .header { background: white; }
+```
+
+Add `is-editor` when the page is being viewed inside the visual editor — useful for showing editor-only UI elements:
+
+```liquid
+<body class="{% if request.is_editor %}is-editor{% endif %}">
+```
+
+```css
+.is-editor .editor-hint { display: block; }
+```
+
+## Header and footer as sections
+
+The recommended pattern is to **not** hardcode the header and footer directly in the layout. Instead, render them as sections so merchants can configure them in the editor:
+
+```liquid
+<body>
+  {% section 'header' %}
+
+  <main>
+    {{ content_for_layout }}
+  </main>
+
+  {% section 'footer' %}
+
+  <script src="{{ 'theme.js' | asset_url }}" defer></script>
+</body>
+```
+
+This gives merchants control over header and footer settings without requiring theme edits, and lets you load their CSS and JS conditionally.
+
+## Asset loading order
+
+Follow this order to maximize performance:
+
+<Steps>
+  <Step title="Preconnect to external origins">
+    Add `<link rel="preconnect">` for Google Fonts and any CDNs before any stylesheets.
+  </Step>
+  <Step title="Load global CSS">
+    Load `theme.css` via `<link>` — it's render-blocking but should be small and cacheable.
+  </Step>
+  <Step title="Inject inline CSS variables">
+    Write a `<style>` block with `:root` CSS variables derived from `settings.*`. These apply instantly with no network round-trip.
+  </Step>
+  <Step title="Load critical JavaScript">
+    Load scripts that define `onclick` handlers **without** `defer`. They must be available before the user can interact.
+  </Step>
+  <Step title="Inject content_for_header">
+    Place `{{ content_for_header }}` last in `<head>` so section meta tags and critical CSS are added after your own styles.
+  </Step>
+  <Step title="Render content_for_layout">
+    Place `{{ content_for_layout }}` in `<body>` where the page sections should appear.
+  </Step>
+  <Step title="Load non-critical JavaScript">
+    Add `<script defer>` tags at the end of `<body>` for analytics, sliders, and other non-blocking features.
+  </Step>
+</Steps>
+
+## Alternative layouts
+
+If you need a separate layout for a specific page type (for example, a minimal checkout page), create an additional file in `layout/`:
+
+```
+layout/
+├── theme.liquid      # default layout
+└── checkout.liquid   # alternate layout
+```
+
+Reference it from the template:
+
+```liquid
+{% layout 'checkout' %}
+
+<h1>Checkout</h1>
+```
+
+## Anti-patterns to avoid
+
+<Warning>
+- **Dynamic loops directly in the layout** — use sections instead of writing `{% for product in products %}` in `theme.liquid`
+- **Large inline JavaScript** — put it in an asset file and reference it with `asset_url`
+- **Omitting `content_for_header`** — this breaks SEO meta tags and critical CSS injection
+- **Using `defer` on scripts with `onclick` handlers** — deferred scripts execute after DOMContentLoaded, which may be too late if the user interacts before loading finishes
+- **CSS `@import` inside `theme.css`** — it blocks rendering; use `<link>` tags instead
+</Warning>
+
+## Debugging the layout
+
+To check that your layout is rendering correctly, request the page and inspect the output:
+
+```bash
+curl http://localhost:3000/s/my-store | head -50
+```
+
+The response should start with `<!DOCTYPE html>`. If it doesn't:
+
+- Confirm `layout/theme.liquid` exists
+- Check for unclosed Liquid tags or invalid syntax
+- See [Common issues](/debug/common-issues) for further debugging steps

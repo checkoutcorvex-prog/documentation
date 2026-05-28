@@ -1,0 +1,512 @@
+---
+title: "Troubleshoot Common Corvex Store Issues"
+description: "Practical debugging guide for Corvex Store: fix JavaScript not initializing, editor not syncing, CSS bleeding between sections, and slow renders."
+---
+
+This guide covers the most frequent problems encountered when developing themes and sections for Corvex Store. Each entry follows the same structure: **symptom → cause → fix**. Use the section headers to jump to the category that matches what you are seeing.
+
+<Tip>
+For quick one-line solutions, check the table at the bottom of this page. For patterns to avoid in the first place, see [Anti-Patterns](/guides/anti-patterns).
+</Tip>
+
+---
+
+## JavaScript and sections
+
+### Section does not initialize
+
+**Symptom:** `document.querySelector('[data-section-type="my-section"]').dataset.sectionInitialized` returns `undefined`. Clicks do nothing.
+
+**Run this first in the preview iframe console:**
+
+```javascript
+window.CorvexSections.getDebugInfo();
+// → { registeredTypes: [...], activeInstances: [...], ... }
+```
+
+If your section type does not appear in `registeredTypes`, the bundle did not load. Work through this checklist:
+
+<Steps>
+  <Step title="Confirm the bundle entry exists">
+    Open `packages/render-backend/scripts/build-sections.mjs` and verify that your section has an entry in `SECTION_BUNDLE_ENTRIES`:
+
+    ```javascript
+    {
+      type:   'my-section',
+      source: join(editorSectionsDir, 'my-section.ts'),
+      output: 'corvex-my-section',
+    }
+    ```
+  </Step>
+  <Step title="Confirm the script map entry exists">
+    Open `packages/render-backend/src/engine/section-scripts.ts` and verify the key:
+
+    ```typescript
+    'my-section': { src: '/assets/sections/corvex-my-section.js' },
+    ```
+  </Step>
+  <Step title="Confirm the import exists">
+    Open `packages/editor-frontend/src/lib/corvex-sections-init.ts` and check:
+
+    ```typescript
+    import './sections/my-section';
+    ```
+  </Step>
+  <Step title="Run the build and verify the output file exists">
+    ```bash
+    npm run build:sections --workspace=render-backend
+    ```
+
+    Confirm that `packages/render-backend/public-assets/sections/corvex-my-section.js` was created.
+  </Step>
+  <Step title="Check for a typo in data-section-type">
+    The value in `data-section-type="my-section"` must match exactly (character for character) the key in `SECTION_SCRIPT_MAP` and the `static readonly type` in the TypeScript class.
+  </Step>
+</Steps>
+
+If your type appears in `registeredTypes` but the section still does not respond to clicks, run:
+
+```javascript
+window.CorvexSections.getInstances('my-section');
+// If this returns an empty array, the DOM element is missing data-section-type
+```
+
+---
+
+### ReferenceError: function is not defined (onclick)
+
+**Symptom:** A button with `onclick="toggleCart()"` throws `ReferenceError: toggleCart is not defined`.
+
+**Cause:** The function is defined in a script loaded with `defer` or at the end of `<body>`. The `defer` attribute delays execution until after the HTML is fully parsed. If a user clicks the button before that point, the function does not exist yet.
+
+**Fix:** Move any function called via `onclick` into a small critical script loaded in `<head>` **without** `defer`:
+
+```liquid
+<head>
+  <!-- No defer — loads synchronously, must be under 5 KB -->
+  <script src="{{ 'header-critical.js' | asset_url }}"></script>
+</head>
+```
+
+Alternatively, switch to `data-action` + event delegation, which avoids the timing issue entirely:
+
+```liquid
+<button data-action="toggle-cart">Cart</button>
+```
+
+```typescript
+this.delegate('click', { 'toggle-cart': () => this.toggleCart() });
+```
+
+See [Performance Overview](/performance/overview) for the full hybrid JS strategy.
+
+---
+
+### Duplicate section ID in the console
+
+**Symptom:** Console shows `[CorvexSections] Duplicate section ID detected: sec_abc123`.
+
+**Cause:** Two `<section data-section-id="sec_abc123">` elements exist in the DOM simultaneously. This happens when:
+
+- A template renders the same section twice (logic error in Liquid)
+- A hot update replaced section HTML but the old DOM node was not removed
+- `innerHTML` was used to inject HTML that already contains the section
+
+**Fix:**
+
+```javascript
+// List all duplicate instances
+document.querySelectorAll('[data-section-id="sec_abc123"]');
+
+// Force a clean re-initialization after resolving the root cause
+window.CorvexSections.initAllSections();
+```
+
+---
+
+### Event listeners accumulating (memory leak)
+
+**Symptom:** After several hot-reload cycles in the editor, page performance degrades. The browser profiler shows dozens of orphaned event listeners attached to `window` or `document`.
+
+**Cause:** `destroy()` does not clean up listeners that were added manually.
+
+**Fix:** Always use `this.on()` from `BaseSection` instead of calling `addEventListener` directly. `this.on()` registers an automatic cleanup function that runs when the section is destroyed:
+
+```typescript
+// Wrong — listener persists after destroy
+mount() {
+  window.addEventListener('resize', this.onResize);
+}
+
+// Correct — automatically cleaned up
+mount() {
+  this.on(window, 'resize', this.onResize);
+}
+```
+
+If you are using the functional registration API, return a cleanup function:
+
+```typescript
+CorvexSections.register('my-section', (el) => {
+  const onResize = () => { /* ... */ };
+  window.addEventListener('resize', onResize);
+
+  return () => {
+    window.removeEventListener('resize', onResize);
+  };
+});
+```
+
+---
+
+### Clicking one section affects another instance
+
+**Symptom:** The page has two instances of the same section. Clicking a button in one instance triggers behavior in the other.
+
+**Cause:** The JavaScript uses `document.querySelector` or a module-level variable instead of instance-scoped queries and instance fields.
+
+**Fix:**
+
+```typescript
+// Wrong — selects elements from both instances
+document.querySelectorAll('.my-btn').forEach(b => b.addEventListener('click', ...));
+
+// Correct — BaseSection scopes queries to this instance
+this.delegate('click', {
+  'my-action': (trigger, ev) => { /* only this instance responds */ }
+});
+```
+
+For global events like `corvex:cart:updated`, filter by checking whether the event target belongs to this instance:
+
+```typescript
+this.on(window, 'corvex:cart:updated' as any, (e: CustomEvent) => {
+  // Only update this instance's UI
+  const count = this.ref('count');
+  if (count) count.textContent = e.detail.count;
+});
+```
+
+---
+
+## CSS
+
+### Styles from one section bleeding into another
+
+**Symptom:** Editing the CSS of `section A` changes the visual appearance of `section B`.
+
+**Cause:** CSS selector without a `section.id` scope. The styles apply to matching elements across the entire page.
+
+**Fix:** Prefix every rule inside `{% style %}` with the section-specific class:
+
+```liquid
+{% style %}
+  /* Wrong — leaks everywhere */
+  .title { font-size: 2rem; }
+
+  /* Correct — scoped to this instance only */
+  .banner-{{ section.id }} .title { font-size: 2rem; }
+{% endstyle %}
+```
+
+---
+
+### styles.css leaking across the whole theme
+
+**Symptom:** Styles in `sections/my-section/styles.css` affect elements outside the section.
+
+**Cause:** The `styles.css` file is injected into `<head>` exactly as written. Unlike `{% style %}` blocks, it has no access to `section.id` to scope rules automatically.
+
+**Fix:** Use an attribute selector in `styles.css` that targets the section type:
+
+```css
+/* sections/my-section/styles.css */
+[data-section-type="my-section"] .title {
+  font-size: 2rem;
+}
+```
+
+Or prefer `{% style %}` inside `template.liquid`, which supports the `{{ section.id }}` variable for full isolation.
+
+---
+
+## Data and Liquid
+
+### product.pricing.discountedPrice is null but the product has a sale price
+
+**Symptom:** A product shows a "sale" badge in the admin but `{{ product.pricing.discountedPrice }}` renders nothing.
+
+**Cause:** `discountedPrice` is `null` when there is no active discount. Use `pricing.price` as the base price and check `discountedPrice` before rendering.
+
+**Fix:**
+
+```liquid
+{% if product.pricing.discountedPrice %}
+  <span class="price-sale">{{ product.pricing.discountedPrice | money }}</span>
+  <del class="price-original">{{ product.pricing.price | money }}</del>
+{% else %}
+  <span class="price">{{ product.pricing.price | money }}</span>
+{% endif %}
+```
+
+---
+
+### products is empty even though the store has products
+
+**Symptom:** `{% for product in products %}` iterates zero times despite the API returning products correctly.
+
+**Possible causes and fixes:**
+
+1. **No section on the page requests products.** The engine only fetches product data when it detects a section that needs it (such as `product-grid`). Add a product-displaying section to the page.
+2. **DataProvider filter is excluding everything.** Check that products are set to `ACTIVE` status and have stock. Products in `DRAFT` status or with zero inventory may be filtered out by default.
+3. **Stale cache.** Restart the backend with `npm run dev` in the `render-backend` package.
+
+---
+
+### cart is undefined in Liquid
+
+**Symptom:** `{{ cart.lines.size }}` renders as blank. The cart seems to not exist in the template.
+
+**Cause:** This is expected behavior. The `cart` object does not exist in the Liquid rendering context. The cart is 100% client-side, stored in the browser's `localStorage`.
+
+**Fix:** Use a section with JavaScript to read and display cart state:
+
+```liquid
+<div data-section-type="cart-details" data-section-id="{{ section.id }}">
+  <span data-ref="count">0</span>
+  <span data-ref="subtotal">$0.00</span>
+</div>
+```
+
+```typescript
+mount() {
+  this.fetchAndRender();
+  this.on(window, 'corvex:cart:updated' as any, (e: CustomEvent) => {
+    this.renderFromCart(e.detail.cart);
+  });
+}
+```
+
+See [Cart](/data/cart) for the full cart API.
+
+---
+
+## Editor and preview
+
+### Changing a setting does not update the preview
+
+**Symptom:** You edit `section.settings.title` in the editor sidebar, but the iframe does not change.
+
+**Check the WebSocket connection first:**
+
+```javascript
+// Run in the preview iframe console
+window.__previewSocket?.connected; // should be true
+```
+
+If `connected` is `false`, the WebSocket is down. Reload the editor tab to reconnect.
+
+**Other causes:**
+
+1. **Section's `update()` method has a bug.** By default, `update()` performs a `destroy` + `mount` cycle. If you override `update()` and do not process `newEl`, nothing changes.
+2. **The setting is a theme-level global setting.** Global settings changes dispatch `theme-settings-applied`, not `preview-update`. Make sure your section listens to the correct event if it handles theme-level settings.
+
+To log all WebSocket events arriving at the preview iframe:
+
+```javascript
+const sock = window.__previewSocket;
+['preview-update', 'theme-settings-applied', 'section-added', 'section-removed']
+  .forEach(ev => sock.on(ev, data => console.log('[WS]', ev, data)));
+```
+
+---
+
+### Block reorder in drag-and-drop does not update the preview immediately
+
+**Symptom:** Dragging a block in the left sidebar reorders it in the panel, but the preview iframe does not reflect the new order until after saving.
+
+**Cause:** This is a known limitation. Reordering blocks requires a full re-render of the section. The preview updates only after the save action completes and the engine receives the new block order.
+
+**Workaround:** Save explicitly after reordering. The preview updates immediately after the save completes.
+
+---
+
+## Rendering and backend
+
+### Missing required placeholder error
+
+**Symptom:** The render fails with an error about a missing placeholder in the layout.
+
+**Cause:** `layout/theme.liquid` is missing `{{ content_for_header }}` or `{{ content_for_layout }}`.
+
+**Fix:** Both tags are required in every `theme.liquid`:
+
+```liquid
+<!DOCTYPE html>
+<html>
+  <head>
+    {{ content_for_header }}
+  </head>
+  <body>
+    {{ content_for_layout }}
+  </body>
+</html>
+```
+
+---
+
+### Page returns blank HTML with no error
+
+**Symptom:** `curl` returns a valid HTML document but the body is completely empty.
+
+**Possible causes:**
+
+1. The route maps to a template file that does not exist
+2. The template has a Liquid syntax error (the engine fails silently in some cases and produces an empty body)
+
+**Diagnose with the debug header:**
+
+```bash
+curl -I http://localhost:3001/my-page | grep -i x-render
+# X-Render-Error: <error message here>
+```
+
+If no `X-Render-Error` header appears but the body is empty, add `DEBUG=corvex:* ` in front of your `npm run dev` command to enable verbose logging.
+
+---
+
+### Images returning 404
+
+**Symptom:** `<img src="{{ 'banner.jpg' | asset_url }}">` returns a 404.
+
+**Possible causes:**
+
+1. **The file was not uploaded.** Open the File Manager and confirm the file exists in the store's asset bucket.
+2. **Path case mismatch.** Asset paths are case-sensitive. `Banner.jpg` and `banner.jpg` are different files.
+3. **Wrong filter.** `asset_url` is for assets you uploaded to the store (images, fonts, CSS). `repo_asset_url` is for assets bundled with the platform itself (placeholder images, icons). Using the wrong one returns 404.
+
+---
+
+## Performance
+
+### LCP score is above 2.5 seconds
+
+**Symptom:** Lighthouse flags Largest Contentful Paint as poor.
+
+**Most common causes and fixes:**
+
+1. **Hero image is not preloaded.** Add a `<link rel="preload">` in `theme.liquid` for the hero image on the home page:
+
+```liquid
+{% if request.page_type == 'index' %}
+  <link rel="preload"
+        as="image"
+        href="{{ section.settings.hero_image | img_url: '1600x800' }}"
+        media="(min-width: 768px)">
+{% endif %}
+```
+
+2. **Hero image is served at full resolution.** Use `img_url` to request the displayed size:
+
+```liquid
+<img src="{{ settings.hero_image | img_url: '1600x800' }}"
+     alt="{{ settings.hero_image_alt }}"
+     fetchpriority="high">
+```
+
+3. **Render-blocking JavaScript in `<head>`.** Only the critical file should load in `<head>`. Every other script should have `defer`.
+
+---
+
+### enrich_context phase is taking over 200 ms
+
+**Symptom:** `Server-Timing` header shows `enrich_context;dur=2400` or similar.
+
+**Cause:** Multiple sections on the same page each trigger an independent product query. Five product-grid sections = five database round trips.
+
+**Fix:** Consolidate sections. Use one `product-grid` with enough products instead of several smaller grids. Use `product_list` settings for hand-curated product displays that skip the database query entirely. Target no more than three data-fetching sections per page.
+
+---
+
+### Section bundle is not found (404 in Network tab)
+
+**Symptom:** The Network tab shows a 404 for `/assets/sections/corvex-my-section.js`.
+
+**Cause:** Either the bundle entry is missing from the build configuration, or the build has not been run since the entry was added.
+
+**Fix:**
+
+1. Verify the entry exists in `build-sections.mjs`
+2. Run the build: `npm run build:sections --workspace=render-backend`
+3. Confirm the output file exists: `packages/render-backend/public-assets/sections/corvex-my-section.js`
+4. Hard-reload the editor: `Ctrl+Shift+R`
+
+---
+
+## Quick reference table
+
+| Symptom | First thing to try |
+|---|---|
+| `Cannot read properties of undefined (reading 'settings')` | Add `{% if section.settings.X != blank %}` guard |
+| `ReferenceError: functionName is not defined` | Move function to `<head>` critical script without `defer` |
+| Section appears duplicated | Check that `initSection` is not being called manually |
+| Editor settings not applying to preview | Check `window.__previewSocket.connected` — reload if false |
+| Broken image icon | Confirm file is uploaded; check `asset_url` vs `img_url` vs `repo_asset_url` |
+| Product price is wrong | Use `product.pricing.price` not `product.price` |
+| Cart is empty after reload | Cart is in localStorage — check key `corvex:cart:<storeId>` |
+| CSS from one section overrides another | Selectoris missing `section.id` scope |
+| Click fires twice | Event listener registered without corresponding cleanup |
+| Preview does not update on settings change | WebSocket disconnected — reload the editor tab |
+| Section bundle not loading (404) | Missing `section-scripts.ts` entry or build not run |
+| `innerHTML is null` error | Replace `document.querySelector` with `this.$` or `this.ref` |
+
+---
+
+## When nothing else works
+
+<Steps>
+  <Step title="Hard reload the editor">
+    `Ctrl+Shift+R` clears service workers and the browser bundle cache.
+  </Step>
+  <Step title="Reset editor state">
+    In the editor domain console: `sessionStorage.clear()` then reload.
+  </Step>
+  <Step title="Full rebuild">
+    From the repo root:
+
+    ```bash
+    npm run build:sections --workspace=render-backend
+    npm run dev:all
+    ```
+  </Step>
+  <Step title="Check backend logs">
+    ```bash
+    DEBUG=corvex:* npm run dev
+    ```
+
+    Look for render warnings and Liquid parse errors.
+  </Step>
+  <Step title="Gather debug info before reporting">
+    - Output of `window.CorvexSections.getDebugInfo()` from the preview console
+    - `curl -I` response headers from the affected URL
+    - Network waterfall exported as a HAR file
+    - Steps to reproduce the issue
+  </Step>
+</Steps>
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="Anti-Patterns" icon="triangle-exclamation" href="/guides/anti-patterns">
+    Prevent these issues from occurring in the first place
+  </Card>
+  <Card title="Performance Overview" icon="gauge-high" href="/performance/overview">
+    Caching, image optimization, and JavaScript loading
+  </Card>
+  <Card title="Section Lifecycle" icon="arrows-rotate" href="/sections/lifecycle">
+    Correct mount, update, and destroy patterns
+  </Card>
+  <Card title="WebSocket API" icon="plug" href="/api/websocket">
+    Preview sync events and connection debugging
+  </Card>
+</CardGroup>

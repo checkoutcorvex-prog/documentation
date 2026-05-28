@@ -1,0 +1,83 @@
+---
+title: "Themes overview: build and customize your store"
+description: "Learn what a Corvex Store theme is, what files it contains, what you can customize, and how to import and export themes as ZIP archives."
+---
+
+A **theme** in Corvex Store is the complete set of visual files that controls how a store looks and behaves: the global HTML shell, page templates, reusable sections, Liquid snippets, static assets, and global settings. Every store runs exactly one active theme at a time, and as a theme developer you own every layer of that presentation.
+
+## What a theme contains
+
+| Part | Description |
+|---|---|
+| `layout/theme.liquid` | The HTML wrapper rendered on every page — `<html>`, `<head>`, `<body>` |
+| `templates/` | Page-type templates for product, collection, cart, search, and more |
+| `sections/` | Configurable, drag-and-drop components with their own Liquid, schema, and CSS |
+| `snippets/` | Reusable Liquid fragments included by templates and sections |
+| `assets/` | Static CSS, JavaScript, images, and fonts |
+| `config/settings_data.json` | The merchant's saved values for global theme settings |
+
+<Note>
+The theme contains only presentation files. Structured data — pages, section configuration, product records, and saved setting values — lives in the database and is injected into your templates at render time.
+</Note>
+
+## What you control as a theme developer
+
+As a developer you can:
+
+- Write new sections with any HTML, CSS, and JavaScript
+- Define which settings each section exposes in the visual editor (colors, text, images, selects, toggles)
+- Modify `layout/theme.liquid` to control the global `<head>`, fonts, and meta tags
+- Add reusable snippets shared across sections and templates
+- Declare global theme variables — color palette, typography, spacing — in `config/settings_schema.json`
+
+Merchants then use the visual editor to:
+
+- Add, remove, and reorder sections on any page
+- Configure each section through the settings sidebar
+- Change global theme settings (colors, fonts, logo)
+- Manage header and footer through their respective section settings
+
+## Import and export
+
+Themes are portable ZIP archives. You can export a theme from one store and import it into any other.
+
+```bash
+# Export a theme
+POST /api/stores/:storeId/export
+# → returns theme.zip
+
+# Import a theme
+POST /api/themes/:storeId/upload
+Content-Type: multipart/form-data
+file: theme.zip
+```
+
+The ZIP contains the full theme directory tree. Importing replaces the store's current theme entirely.
+
+## Theme files vs. stored data
+
+It helps to keep a clear mental model of what lives in the theme files versus what lives in the database:
+
+| In the theme files | In the database |
+|---|---|
+| `layout/theme.liquid` | Per-page section configuration |
+| Liquid templates | Section order and types per page |
+| CSS and JavaScript | Merchant-saved settings values |
+| Images and fonts (served from storage) | `settings_data.json` values |
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="File structure" icon="folder-tree" href="/themes/structure">
+    See the full directory tree of a theme and what each file does.
+  </Card>
+  <Card title="Layout" icon="layout-panel-top" href="/themes/layout">
+    Understand `theme.liquid`, required placeholders, and loading order.
+  </Card>
+  <Card title="Settings and data" icon="sliders" href="/themes/settings-data">
+    Declare global theme settings and access them in Liquid via `settings`.
+  </Card>
+  <Card title="Create a theme" icon="hammer" href="/guides/create-theme">
+    Step-by-step tutorial for building a theme from scratch.
+  </Card>
+</CardGroup>

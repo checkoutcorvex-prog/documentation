@@ -1,0 +1,194 @@
+---
+title: "Collections and categories: display and filter products"
+description: "How to use collection and categories objects in Corvex Store templates: list products, build navigation, render hierarchies, and filter by category."
+---
+
+Corvex Store provides two mechanisms for grouping products: **categories** and **collections**. This page explains the difference between them, documents the shape of each object, and shows you how to use them in your Liquid templates to build navigation menus, product grids, and collection pages.
+
+## Categories vs collections
+
+| Use case | Use |
+|---|---|
+| Permanent navigation menu | **Categories** |
+| Product taxonomy with breadcrumbs | **Categories** |
+| A product belongs to one or a few groups | **Categories** |
+| Curated storefront ("Best sellers") | **Collections** |
+| Temporary campaign ("Black Friday") | **Collections** |
+| Rule-based auto-grouping | **Collections** |
+
+**Categories** are hierarchical. They can have a parent/child relationship and are typically used for fixed taxonomy like "T-shirts > Short sleeve".
+
+**Collections** are flexible, either manual or automatic. They are used for curated storefronts like "New Arrivals" or "Summer 2025".
+
+## `categories`
+
+The `categories` array is available on every page. It is a lightweight list — fetched once and cached — so you can safely use it in your layout to build navigation without impacting page performance.
+
+```typescript
+interface Category {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string;
+  image?: string;
+  productsCount?: number;
+  parentId?: string | null;   // null for root categories
+}
+```
+
+### Flat navigation list
+
+```liquid
+<nav>
+  {% for category in categories %}
+    <a href="/categories/{{ category.slug }}">{{ category.name }}</a>
+  {% endfor %}
+</nav>
+```
+
+### Hierarchical navigation (parent → children)
+
+Use the `where` filter to separate root categories from subcategories, then loop over the roots and find their children:
+
+```liquid
+{% assign roots = categories | where: 'parentId', null %}
+
+<ul class="category-nav">
+  {% for cat in roots %}
+    <li>
+      <a href="/categories/{{ cat.slug }}">{{ cat.name }}</a>
+
+      {% assign subs = categories | where: 'parentId', cat.id %}
+      {% if subs.size > 0 %}
+        <ul class="category-nav__sub">
+          {% for sub in subs %}
+            <li>
+              <a href="/categories/{{ sub.slug }}">{{ sub.name }}</a>
+            </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </li>
+  {% endfor %}
+</ul>
+```
+
+### Categories on a product page
+
+Display the categories a product belongs to as tags or breadcrumb links:
+
+```liquid
+{% for cat in product.categories %}
+  <a href="/categories/{{ cat.slug }}" class="tag">{{ cat.name }}</a>
+{% endfor %}
+```
+
+### Category images with fallback
+
+Render a category image if available, or a generated placeholder if not:
+
+```liquid
+{% if category.image %}
+  <img src="{{ category.image | img_url: '600x' }}"
+       alt="{{ category.name }}">
+{% else %}
+  <div class="category-placeholder">
+    {{ category.name | slice: 0 }}
+  </div>
+{% endif %}
+```
+
+## `collection`
+
+On a collection page (`/collections/:slug`), Corvex injects a `collection` object for that specific collection. It includes the collection's metadata and its products.
+
+```typescript
+interface Collection {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string;
+  image?: string;
+  productsCount?: number;
+  products?: Product[];   // present on /collections/:slug pages
+}
+```
+
+### Collection page template
+
+```liquid
+<!-- templates/collection.liquid -->
+<h1>{{ collection.name }}</h1>
+
+{% if collection.image %}
+  <img src="{{ collection.image | img_url: '1200x400' }}"
+       alt="{{ collection.name }}">
+{% endif %}
+
+{% if collection.description %}
+  <p>{{ collection.description }}</p>
+{% endif %}
+
+<p>{{ collection.productsCount }} products</p>
+
+<div class="product-grid">
+  {% for product in collection.products %}
+    {% include 'product-card' %}
+  {% empty %}
+    <p>No products in this collection yet.</p>
+  {% endfor %}
+</div>
+```
+
+<Info>
+`collection.products` is only populated on `/collections/:slug` pages. On other page types, use the `products` array from sections that request it.
+</Info>
+
+## Filtering products by category in sections
+
+When a section needs to display products from a specific category, declare a text setting for the category slug in your section schema and use the `where` filter in Liquid to filter the loaded `products` array:
+
+**Schema setting (`schema.json`):**
+
+```json
+{
+  "type": "text",
+  "id": "category_slug",
+  "label": "Category slug",
+  "default": "t-shirts"
+}
+```
+
+**Template:**
+
+```liquid
+{% assign cat_products = products | where: 'categorySlug', section.settings.category_slug %}
+
+{% for product in cat_products limit: 8 %}
+  {% include 'product-card' %}
+{% endfor %}
+```
+
+<Warning>
+Liquid filters like `where` operate on the array that is already loaded into memory. If you need server-side filtering, pagination, or many different categories on the same page, use dedicated sections that the backend populates with the correct query — rather than loading all products and filtering in Liquid.
+</Warning>
+
+## Cache TTLs
+
+Categories and collections change less frequently than products, so they use longer cache TTLs:
+
+| Query | Draft TTL | Published TTL |
+|---|---|---|
+| `getCategories()` | 5 s | 60 s |
+| `getCollections()` | 5 s | 60 s |
+| `getCollection(slug)` | 5 s | 60 s |
+
+## Performance tips for large collection grids
+
+If you are rendering a grid of 50 or more products from a collection:
+
+- Use `img_url: '400x400'` rather than serving the original image URL.
+- Add `loading="lazy"` to all images except the first 3, which appear above the fold.
+- Consider splitting very large collections across paginated sections rather than loading all products in one request.
+
+See [Performance overview](/performance/overview) for additional optimization strategies.

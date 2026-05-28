@@ -1,0 +1,177 @@
+---
+title: "Theme file structure: directories and files explained"
+description: "The complete directory tree of a Corvex Store theme, the purpose of every file and folder, and how template, section, snippet, and asset files relate."
+---
+
+Understanding the file structure of a Corvex Store theme is the first step to building one confidently. Every directory has a specific role, and the engine expects files in exact locations. This page walks through each part of the tree so you know where to put what.
+
+## Directory tree
+
+```
+theme/
+├── layout/
+│   └── theme.liquid          # HTML wrapper rendered on every page
+│
+├── templates/                # Page-type templates
+│   ├── index.liquid          # Home page
+│   ├── product.liquid        # Product detail page
+│   ├── collection.liquid     # Collection / category page
+│   ├── page.liquid           # Generic content pages
+│   ├── search.liquid         # Search results
+│   ├── cart.liquid           # Shopping cart
+│   └── 404.liquid            # Not-found error page
+│
+├── sections/                 # Configurable drag-and-drop components
+│   └── my-section/
+│       ├── template.liquid   # Section HTML and Liquid logic
+│       ├── schema.json       # Settings definition for the editor
+│       └── styles.css        # Scoped CSS (optional)
+│
+├── snippets/                 # Reusable Liquid fragments
+│   ├── product-card.liquid
+│   ├── icon-cart.liquid
+│   └── star-rating.liquid
+│
+├── assets/                   # Static files served to the browser
+│   ├── theme.css
+│   ├── theme.js
+│   └── logo.png
+│
+└── config/
+    └── settings_data.json    # Merchant's saved global settings values
+```
+
+## `layout/theme.liquid`
+
+This is the most important file in a theme. It wraps **every page** and defines the global HTML structure. It must include two required placeholders — `{{ content_for_header }}` inside `<head>` and `{{ content_for_layout }}` inside `<body>`.
+
+```liquid
+<!DOCTYPE html>
+<html lang="{{ shop.locale | default: 'en' }}">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ seo.title | default: shop.name }}</title>
+  <meta name="description" content="{{ seo.description }}">
+
+  <link rel="stylesheet" href="{{ 'theme.css' | asset_url }}">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family={{ settings.font_heading }}:wght@700&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --color-primary: {{ settings.color_primary }};
+      --color-accent:  {{ settings.color_accent }};
+      --font-heading:  {{ settings.font_heading }}, serif;
+      --font-body:     {{ settings.font_body }}, sans-serif;
+    }
+  </style>
+
+  {{ content_for_header }}
+</head>
+<body>
+  {{ content_for_layout }}
+
+  <script src="{{ 'theme.js' | asset_url }}" defer></script>
+</body>
+</html>
+```
+
+<Warning>
+Both `{{ content_for_header }}` and `{{ content_for_layout }}` are required. Omitting either causes a render error — critical CSS and section HTML will not be injected into the page.
+</Warning>
+
+## `templates/`
+
+Templates define the structure for specific page types. In most cases, pages are built from the section list stored in the database — but you can use an explicit template when you need a fixed, hardcoded structure.
+
+```liquid
+{# templates/product.liquid #}
+{% section 'product-details' %}
+{% section 'recommended-products' %}
+```
+
+If no template exists for a given page type, the engine uses the database's section list directly.
+
+## `sections/`
+
+Each section lives in its own subdirectory. The three files a section can contain are:
+
+| File | Required | Description |
+|---|---|---|
+| `template.liquid` | Yes | The section's HTML and Liquid logic |
+| `schema.json` | Yes | Defines the editable settings shown in the editor |
+| `styles.css` | No | Scoped CSS injected into the `<head>` for this section |
+
+See [Sections overview](/sections/overview) for the complete anatomy of a section.
+
+## `snippets/`
+
+Snippets are reusable Liquid fragments you include in any template or section with `{% render %}`:
+
+```liquid
+{% render 'product-card', product: product %}
+```
+
+```liquid
+{# snippets/product-card.liquid #}
+<div class="product-card">
+  <img src="{{ product.media.images[0].url | img_url: '400x400' }}" alt="{{ product.name }}">
+  <h3>{{ product.name }}</h3>
+  <p>{{ product.pricing.price | money }}</p>
+</div>
+```
+
+Snippets have no schema and do not appear as configurable components in the editor.
+
+## `config/settings_data.json`
+
+This file stores the merchant's current saved values for all global theme settings:
+
+```json
+{
+  "current": {
+    "color_primary": "#1a1a2e",
+    "color_accent": "#e63946",
+    "font_heading": "Poppins",
+    "font_body": "Inter",
+    "font_size_base": 16,
+    "border_radius": 8,
+    "sections": {
+      "header": {
+        "type": "header-pro",
+        "settings": {
+          "store_name": "My Store",
+          "sticky_header": true
+        }
+      },
+      "footer": {
+        "type": "footer-pro",
+        "settings": {
+          "background_color": "#111111"
+        }
+      }
+    }
+  }
+}
+```
+
+All values in this file are available in any template, section, or snippet via `{{ settings.color_primary }}`, `{{ settings.font_heading }}`, and so on.
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="Layout" icon="layout-panel-top" href="/themes/layout">
+    Deep dive into `theme.liquid`, placeholders, and loading order.
+  </Card>
+  <Card title="Templates" icon="file-text" href="/themes/templates">
+    Available template variables and page-type context.
+  </Card>
+  <Card title="Snippets" icon="code" href="/themes/snippets">
+    How to write and include reusable Liquid fragments.
+  </Card>
+  <Card title="Assets" icon="image" href="/themes/assets">
+    Reference CSS, JavaScript, and images from your theme.
+  </Card>
+</CardGroup>

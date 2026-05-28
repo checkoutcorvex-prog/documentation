@@ -1,0 +1,314 @@
+---
+title: "Cart: CartDTO shape, REST API, and client-side events"
+description: "How the Corvex Store cart works: CartDTO shape, REST API endpoints, localStorage sync, custom events, and displaying cart contents with JavaScript."
+---
+
+The Corvex Store cart uses a hybrid architecture: the backend database is the authoritative source of truth, while localStorage provides an optimistic cache that makes the UI feel instant. This page explains the cart shape, the REST API endpoints you call from JavaScript, the events your sections can listen to, and how to display cart contents.
+
+<Warning>
+The `cart` object does **not** exist in Liquid templates. The Corvex render backend caches HTML aggressively and cart data is session-specific — these two facts make server-side cart rendering impractical. To display cart contents, use JavaScript to call the cart REST API and update the DOM.
+</Warning>
+
+## Architecture
+
+```
+CLIENT
+  Cart badge in header  ← reads localStorage (instant)
+  Cart page             ← calls GET /api/cart (authoritative)
+       │                           │
+       ▼                           ▼
+  localStorage (optimistic)    fetch /api/cart/*
+
+SERVER
+  Cart repository (database)
+  ├─ Cart { id, storeId, sessionId, createdAt, ... }
+  └─ CartLine {
+       productId, variantId, quantity,
+       title, variantTitle, image, sku,
+       price, finalPrice, selectedOptions, addedAt
+     }
+
+  computeCartTotalsForStore() → { subtotal, discountedSubtotal, total, ... }
+```
+
+## CartDTO shape
+
+The cart REST API returns a `CartDTO` object:
+
+```typescript
+interface CartDTO {
+  storeId: string;
+  sessionId: string;
+  lines: CartLineDTO[];
+  totals?: CartTotals;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface CartLineDTO {
+  productId: string;
+  variantId: string | null;
+  quantity: number;
+  title: string;
+  variantTitle: string | null;
+  image: string | null;
+  sku: string | null;
+  price: number;
+  finalPrice: number;
+  selectedOptions: Record<string, string> | null; // e.g. { Color: "Black", Size: "M" }
+  addedAt: string;
+}
+
+interface CartTotals {
+  subtotal: number;             // sum of price × quantity
+  discountedSubtotal: number;   // sum of finalPrice × quantity
+  discountAmount: number;       // subtotal - discountedSubtotal
+  itemCount: number;            // total quantity
+  lineCount: number;            // number of distinct lines
+  currency: string;
+}
+```
+
+**Example payload:**
+
+```json
+{
+  "storeId":   "store_01",
+  "sessionId": "sess_abc123",
+  "lines": [
+    {
+      "productId":    "prod_01",
+      "variantId":    "var_03",
+      "quantity":     2,
+      "title":        "Essential Tee",
+      "variantTitle": "Black / M",
+      "image":        "https://cdn.example.com/tee.jpg",
+      "sku":          "TEE-BLK-M",
+      "price":        89.90,
+      "finalPrice":   79.90,
+      "selectedOptions": { "Color": "Black", "Size": "M" },
+      "addedAt":      "2025-04-15T12:34:56.789Z"
+    }
+  ],
+  "totals": {
+    "subtotal":           179.80,
+    "discountedSubtotal": 159.80,
+    "discountAmount":     20.00,
+    "itemCount":          2,
+    "lineCount":          1,
+    "currency":           "USD"
+  },
+  "createdAt": "2025-04-15T12:30:00.000Z",
+  "updatedAt": "2025-04-15T12:34:56.789Z"
+}
+```
+
+## Why each line stores a product snapshot
+
+When a line is added to the cart, the backend records a complete snapshot of the product at that moment — title, image, price, SKU, and variant title. This snapshot means:
+
+- The cart renders without making additional catalog requests. If the catalog API is unavailable, the cart still displays correctly.
+- If a product's price or name changes after it was added, the cart continues to show the original values until checkout.
+- If a product is removed from the catalog entirely, existing cart lines still display correctly.
+
+## REST API
+
+### Get the current cart
+
+```bash
+GET /api/stores/:storeId/cart
+
+curl "https://mystore.corvex.store/api/stores/store_01/cart" \
+  -H "x-session-id: sess_abc123"
+```
+
+### Add an item
+
+Adds a new line or increments the quantity if the same `productId` + `variantId` combination already exists (idempotent).
+
+```bash
+POST /api/stores/:storeId/cart/add
+
+curl -X POST "https://mystore.corvex.store/api/stores/store_01/cart/add" \
+  -H "Content-Type: application/json" \
+  -H "x-session-id: sess_abc123" \
+  -d '{
+    "productId": "prod_01",
+    "variantId": "var_03",
+    "quantity":  1,
+    "hint": {
+      "title":        "Essential Tee",
+      "variantTitle": "Black / M",
+      "image":        "https://cdn.example.com/tee.jpg",
+      "price":        89.90,
+      "finalPrice":   79.90,
+      "sku":          "TEE-BLK-M"
+    },
+    "selectedOptions": {
+      "Color": "Black",
+      "Size":  "M"
+    }
+  }'
+```
+
+<Tip>
+Always include the `hint` object. It provides the backend with a snapshot to store in case it cannot resolve the product from the catalog at the time of the add operation.
+</Tip>
+
+### Update a line quantity
+
+Set `quantity` to `0` to remove the line.
+
+```bash
+PATCH /api/stores/:storeId/cart/update
+
+curl -X PATCH "https://mystore.corvex.store/api/stores/store_01/cart/update" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "productId": "prod_01",
+    "variantId": "var_03",
+    "quantity":  3
+  }'
+```
+
+### Remove a specific line
+
+```bash
+DELETE /api/stores/:storeId/cart/remove
+```
+
+### Clear the entire cart
+
+```bash
+DELETE /api/stores/:storeId/cart
+```
+
+## Totals and discounts
+
+The backend computes totals with `computeCartTotalsForStore()`. This is the same logic the frontend uses for its optimistic cache, ensuring the displayed total and the server-calculated total always match.
+
+If your store has [discount ranges](/data/discount-ranges) configured (for example, "10% off orders over $200"), the discount is already applied in `totals.discountedSubtotal`. Your templates do not need to calculate discounts — just display `discountedSubtotal`.
+
+## Displaying the cart in your theme
+
+### Cart badge (header)
+
+Render a placeholder in Liquid and populate it with JavaScript:
+
+```liquid
+<a href="{{ routes.cart }}" class="cart-badge" data-ref="cart-link">
+  Cart (<span data-ref="count">0</span>)
+</a>
+```
+
+```typescript
+class HeaderCartBadge extends BaseSection {
+  static readonly type = 'header-cart-badge';
+
+  async mount() {
+    // 1. Read the optimistic count from localStorage (instant)
+    const cached = this.readLocal();
+    this.updateCount(cached?.itemCount ?? 0);
+
+    // 2. Fetch the authoritative count from the backend
+    const fresh = await fetch(
+      '/api/stores/' + window.__STORE_ID__ + '/cart'
+    ).then(r => r.json());
+    this.updateCount(fresh.totals?.itemCount ?? 0);
+
+    // 3. Keep count in sync with real-time cart changes
+    this.on(window, 'corvex:cart:updated' as any, (e: CustomEvent) => {
+      this.updateCount(e.detail.itemCount);
+    });
+  }
+
+  private updateCount(n: number) {
+    const el = this.ref('count');
+    if (el) el.textContent = String(n);
+  }
+}
+```
+
+### Cart page (cart-details section)
+
+The built-in `cart-details` section renders a skeleton in Liquid and populates it via JavaScript after mount:
+
+```liquid
+<section data-section-type="cart-details" data-section-id="{{ section.id }}">
+  <div data-ref="loading">Loading...</div>
+  <ul data-ref="lines" hidden></ul>
+  <div data-ref="totals" hidden></div>
+  <div data-ref="empty" hidden>Your cart is empty.</div>
+</section>
+```
+
+### Rendering individual cart lines
+
+Use `selectedOptions` from the cart line to display variant details without re-fetching the catalog:
+
+```typescript
+private renderLine(line: CartLineDTO): string {
+  const optionsText = line.selectedOptions
+    ? Object.entries(line.selectedOptions)
+        .map(([k, v]) => `${k}: ${v}`)
+        .join(' · ')
+    : '';
+
+  return `
+    <li class="cart-line">
+      <img src="${line.image}" alt="${line.title}">
+      <div>
+        <h4>${line.title}</h4>
+        ${optionsText ? `<small>${optionsText}</small>` : ''}
+        <span>$${line.finalPrice.toFixed(2)} × ${line.quantity}</span>
+      </div>
+    </li>
+  `;
+}
+```
+
+## Cart events
+
+Corvex emits `CustomEvent`s on `window` whenever the cart changes. Listen to these events in any section to keep your UI in sync:
+
+| Event | Payload | When emitted |
+|---|---|---|
+| `corvex:cart:added` | `{ productId, variantId, quantity, cart }` | After a successful ADD |
+| `corvex:cart:updated` | `{ cart, totals }` | After any cart change |
+| `corvex:cart:removed` | `{ productId, variantId, cart }` | After a line is removed |
+| `corvex:cart:cleared` | `{ cart }` | After the cart is cleared |
+| `corvex:cart:error` | `{ message, status, operation }` | On network or validation errors |
+
+**Listening to events in a section:**
+
+```typescript
+this.on(window, 'corvex:cart:added' as any, (event: CustomEvent) => {
+  const { cart } = event.detail;
+  this.showMiniCart(cart);
+});
+```
+
+## Debugging
+
+```javascript
+// Inspect the optimistic cart in localStorage
+JSON.parse(localStorage.getItem('corvex_cart_' + window.__STORE_ID__));
+
+// Fetch the authoritative cart from the backend
+fetch('/api/stores/' + window.__STORE_ID__ + '/cart')
+  .then(r => r.json())
+  .then(console.table);
+
+// Clear the cart (useful during development)
+fetch('/api/stores/' + window.__STORE_ID__ + '/cart', { method: 'DELETE' });
+```
+
+## Limitations
+
+<Warning>
+- **No `cart` in Liquid** — always use JavaScript and the cart REST API.
+- **Cart is session-scoped** — tied to a `sessionId` cookie. Carts do not persist across devices. For cross-device persistence, implement a custom authentication layer.
+- **No unit pricing** — there is no built-in price-per-unit-of-measure calculation.
+- **No native abandoned cart** — to recover abandoned carts, write an external job that queries the cart database table.
+- **Discounts are not cumulative** — only the highest-priority [discount range](/data/discount-ranges) applies per order.
+</Warning>

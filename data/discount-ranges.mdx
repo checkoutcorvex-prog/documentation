@@ -1,0 +1,236 @@
+---
+title: "Discount ranges: badges, banners, and cart progress bars"
+description: "Use the discount_ranges Liquid object in Corvex Store to display promotional banners, discount badges on product pages, and cart progress bars."
+---
+
+Corvex Store lets merchants configure progressive discounts — called **discount ranges** — that activate when a cart reaches a certain value or quantity. As a theme developer, you access these ranges through the `discount_ranges` Liquid object to build promotional banners, upsell callouts on product pages, and cart progress bars. This page documents the shape of a discount range and shows you how to use it in your templates and sections.
+
+## What discount ranges do
+
+Discount ranges define rules like:
+
+- "10% off when cart total exceeds $200"
+- "15% off when cart contains 3 or more items"
+- "Free shipping on orders over $299"
+
+The backend applies these discounts automatically when computing cart totals. Your templates do not need to calculate the discount — they receive the already-discounted `totals.discountedSubtotal` from the [cart API](/data/cart). Your job is to display the ranges so customers know which deals are available.
+
+## The `discount_ranges` object
+
+`discount_ranges` is available on every page. If no ranges are configured, it is an empty array (`[]`).
+
+```typescript
+interface DiscountRange {
+  id: string;
+  name: string;                           // "10% off on orders over $200"
+  description?: string;
+
+  trigger: {
+    type: 'cart_value' | 'cart_quantity';
+    threshold: number;                    // 200 (dollars) or 3 (items)
+  };
+
+  discount: {
+    type: 'percentage' | 'fixed' | 'free_shipping';
+    value: number;                        // 10 for 10%, or a fixed amount
+  };
+
+  active: boolean;
+  priority?: number;                      // higher number = applied first
+  startsAt?: string;                      // ISO 8601
+  endsAt?: string;
+}
+```
+
+**Example configuration:**
+
+```json
+[
+  {
+    "id":          "disc_01",
+    "name":        "10% off on orders over $200",
+    "description": "Applied automatically at checkout",
+    "trigger":     { "type": "cart_value",    "threshold": 200 },
+    "discount":    { "type": "percentage",    "value": 10 },
+    "active":      true,
+    "priority":    1
+  },
+  {
+    "id":          "disc_02",
+    "name":        "Free shipping on orders over $299",
+    "trigger":     { "type": "cart_value",    "threshold": 299 },
+    "discount":    { "type": "free_shipping", "value": 0 },
+    "active":      true,
+    "priority":    2
+  }
+]
+```
+
+## Promotional banner
+
+Display active discount ranges in a site-wide banner:
+
+```liquid
+{% if discount_ranges.size > 0 %}
+  <div class="promo-banner">
+    {% for range in discount_ranges %}
+      {% if range.active %}
+        <span class="promo">{{ range.name }}</span>
+      {% endif %}
+    {% endfor %}
+  </div>
+{% endif %}
+```
+
+## Upsell callout on product pages
+
+Show customers which deals they can unlock by adding the current product to their cart:
+
+```liquid
+{% if discount_ranges.size > 0 %}
+  <aside class="upsell">
+    <h4>Available discounts:</h4>
+    <ul>
+      {% for range in discount_ranges %}
+        {% if range.active %}
+          <li>
+            {% if range.discount.type == 'percentage' %}
+              {{ range.discount.value }}% off
+            {% elsif range.discount.type == 'fixed' %}
+              ${{ range.discount.value }} off
+            {% elsif range.discount.type == 'free_shipping' %}
+              Free shipping
+            {% endif %}
+            {% if range.trigger.type == 'cart_value' %}
+              on orders over ${{ range.trigger.threshold }}
+            {% elsif range.trigger.type == 'cart_quantity' %}
+              when you buy {{ range.trigger.threshold }} or more items
+            {% endif %}
+          </li>
+        {% endif %}
+      {% endfor %}
+    </ul>
+  </aside>
+{% endif %}
+```
+
+## Cart progress bar
+
+Show customers how close they are to unlocking the next discount. Pass the `discount_ranges` array to your section via a `data-` attribute so the JavaScript component can react to real-time cart changes:
+
+**Liquid template:**
+
+```liquid
+<section data-section-type="cart-discount-progress"
+         data-section-id="{{ section.id }}"
+         data-ranges='{{ discount_ranges | json }}'>
+  <div data-ref="message">...</div>
+  <progress data-ref="bar" value="0" max="100"></progress>
+</section>
+```
+
+**Section script:**
+
+```typescript
+class CartDiscountProgress extends BaseSection {
+  static readonly type = 'cart-discount-progress';
+
+  private ranges: DiscountRange[] = [];
+
+  mount() {
+    this.ranges = JSON.parse(this.el.dataset.ranges || '[]');
+
+    // React to real-time cart updates
+    this.on(window, 'corvex:cart:updated' as any, (e: CustomEvent) => {
+      this.update(e.detail.totals);
+    });
+
+    // Initialize from the current cart state
+    const current = this.readCartTotals();
+    if (current) this.update(current);
+  }
+
+  private update(totals: { subtotal: number; itemCount: number }) {
+    const next = this.findNextRange(totals);
+    const msg = this.ref('message')!;
+    const bar = this.ref<HTMLProgressElement>('bar')!;
+
+    if (!next) {
+      msg.textContent = 'You have unlocked all available discounts!';
+      bar.value = 100;
+      return;
+    }
+
+    const current =
+      next.trigger.type === 'cart_value' ? totals.subtotal : totals.itemCount;
+    const pct = Math.min(100, (current / next.trigger.threshold) * 100);
+
+    msg.textContent =
+      `Add $${(next.trigger.threshold - current).toFixed(2)} more to get ${next.name}`;
+    bar.value = pct;
+  }
+
+  private findNextRange(totals: { subtotal: number; itemCount: number }) {
+    return this.ranges
+      .filter(r => r.active)
+      .sort((a, b) => a.trigger.threshold - b.trigger.threshold)
+      .find(r => {
+        const current =
+          r.trigger.type === 'cart_value' ? totals.subtotal : totals.itemCount;
+        return current < r.trigger.threshold;
+      });
+  }
+}
+```
+
+## How discounts are applied
+
+Discounts are calculated and applied entirely on the backend. When you call `GET /api/stores/:storeId/cart`, the returned `totals.discountedSubtotal` already reflects the applied discount. You never need to calculate this in your templates or scripts.
+
+**Trigger logic:**
+
+| Trigger type | Condition |
+|---|---|
+| `cart_value` | Applies when `cart.totals.subtotal >= threshold` |
+| `cart_quantity` | Applies when `cart.totals.itemCount >= threshold` |
+
+**When multiple ranges qualify:**
+
+- Only the range with the highest `priority` value is applied.
+- Discounts are not cumulative.
+
+See [Cart](/data/cart) for details on how totals are returned from the API.
+
+## Limitations
+
+<Warning>
+- Only **one discount range** applies per order — the one with the highest priority.
+- Discount ranges **do not combine** with manual coupon codes. There is no native coupon system.
+- Ranges apply globally to the entire cart — you cannot restrict them to specific product types, categories, or customers.
+- Digital products and memberships count normally toward `cart_value` and `cart_quantity` thresholds.
+</Warning>
+
+## Debugging
+
+Expose the ranges in your theme's layout so you can inspect them in the browser console:
+
+```liquid
+<!-- In layout/theme.liquid -->
+<script>window.__DISCOUNT_RANGES__ = {{ discount_ranges | json }};</script>
+```
+
+Then in the browser console:
+
+```javascript
+// Inspect available ranges
+console.table(window.__DISCOUNT_RANGES__);
+
+// Check which discount is currently applied to the cart
+fetch('/api/stores/' + window.__STORE_ID__ + '/cart')
+  .then(r => r.json())
+  .then(cart => {
+    console.log('subtotal:',           cart.totals.subtotal);
+    console.log('after discount:',     cart.totals.discountedSubtotal);
+    console.log('discount applied:',   cart.totals.discountAmount);
+  });
+```

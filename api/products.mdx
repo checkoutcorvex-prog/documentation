@@ -1,0 +1,289 @@
+---
+title: "Products API — list, search, and filter products"
+description: "Fetch product listings, retrieve individual products by ID or slug, and filter by category, price range, status, and more using the Corvex Store Products API."
+---
+
+The Products API gives you access to your store's product catalog. Use it to build product grids, search results, category pages, and featured product sections. Products are available through both authenticated and public endpoints, so you can serve storefront visitors without requiring credentials.
+
+## Endpoints
+
+| Method | Path | Auth required |
+|---|---|---|
+| `GET` | `/api/stores/:storeId/products` | Bearer token |
+| `GET` | `/api/stores/:storeId/products/:productId` | Bearer token |
+| `GET` | `/api/public/stores/:storeId/products` | None |
+
+<Note>
+Use the `/api/public/...` endpoint for storefront-facing product listings. It requires no authentication and is subject to the public rate limit of 1,000 requests/min per IP.
+</Note>
+
+## List products
+
+Fetch a paginated list of products for a store. Apply query parameters to filter, sort, and search results.
+
+```
+GET /api/stores/:storeId/products
+```
+
+### Query parameters
+
+<ParamField path="query.page" type="number" default="1">
+  Page number for pagination.
+</ParamField>
+
+<ParamField path="query.limit" type="number" default="20">
+  Items per page. Maximum 100.
+</ParamField>
+
+<ParamField path="query.status" type="string">
+  Filter by product status. Accepted values: `ACTIVE`, `DRAFT`, `ARCHIVED`.
+</ParamField>
+
+<ParamField path="query.featured" type="boolean">
+  When `true`, returns only featured products.
+</ParamField>
+
+<ParamField path="query.category" type="string">
+  Filter by category slug.
+</ParamField>
+
+<ParamField path="query.categoryId" type="string">
+  Filter by category ID.
+</ParamField>
+
+<ParamField path="query.search" type="string">
+  Full-text search across product name and description.
+</ParamField>
+
+<ParamField path="query.sortBy" type="string" default="createdAt">
+  Sort field. Accepted values: `name`, `price`, `createdAt`.
+</ParamField>
+
+<ParamField path="query.sortOrder" type="string" default="desc">
+  Sort direction. Accepted values: `asc`, `desc`.
+</ParamField>
+
+<ParamField path="query.minPrice" type="number">
+  Minimum price filter (inclusive).
+</ParamField>
+
+<ParamField path="query.maxPrice" type="number">
+  Maximum price filter (inclusive).
+</ParamField>
+
+### Example request
+
+<CodeGroup>
+
+```bash List all active products
+curl https://render.corvex.store/api/stores/$STORE_ID/products \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```bash Featured products, sorted by price
+curl "https://render.corvex.store/api/stores/$STORE_ID/products?featured=true&limit=8&sortBy=price&sortOrder=asc" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```bash Search with price range
+curl "https://render.corvex.store/api/stores/$STORE_ID/products?search=running+shoes&minPrice=50&maxPrice=200&status=ACTIVE" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```bash Filter by category
+curl "https://render.corvex.store/api/stores/$STORE_ID/products?category=sneakers&limit=12" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+</CodeGroup>
+
+### Response
+
+```json
+{
+  "items": [
+    {
+      "id": "prod_01abc",
+      "name": "Running Shoe Pro",
+      "slug": "running-shoe-pro",
+      "status": "ACTIVE",
+      "featured": true,
+      "price": 129.99,
+      "compareAtPrice": 159.99,
+      "category": {
+        "id": "cat_sneakers",
+        "slug": "sneakers",
+        "name": "Sneakers"
+      },
+      "images": [
+        {
+          "url": "https://cdn.corvex.store/stores/store_01/products/shoe-main.jpg",
+          "alt": "Running Shoe Pro front view"
+        }
+      ],
+      "variants": [
+        {
+          "key": "size-40",
+          "label": "Size 40",
+          "price": 129.99,
+          "stock": 15
+        }
+      ],
+      "createdAt": "2025-01-10T09:00:00Z",
+      "updatedAt": "2025-03-20T14:30:00Z"
+    }
+  ],
+  "page": 1,
+  "limit": 20,
+  "total": 148,
+  "hasMore": true
+}
+```
+
+### Response fields
+
+<ResponseField name="items" type="object[]" required>
+  Array of product objects.
+
+  <Expandable title="product properties">
+    <ResponseField name="id" type="string" required>
+      Unique product identifier.
+    </ResponseField>
+    <ResponseField name="name" type="string" required>
+      Display name of the product.
+    </ResponseField>
+    <ResponseField name="slug" type="string" required>
+      URL-safe identifier. Use this in product URLs and as the `:productId` path parameter.
+    </ResponseField>
+    <ResponseField name="status" type="string" required>
+      One of `ACTIVE`, `DRAFT`, or `ARCHIVED`.
+    </ResponseField>
+    <ResponseField name="featured" type="boolean">
+      Whether the product is marked as featured.
+    </ResponseField>
+    <ResponseField name="price" type="number" required>
+      Current sale price.
+    </ResponseField>
+    <ResponseField name="compareAtPrice" type="number">
+      Original price before discount, if applicable.
+    </ResponseField>
+    <ResponseField name="category" type="object">
+      Category the product belongs to, with `id`, `slug`, and `name`.
+    </ResponseField>
+    <ResponseField name="images" type="object[]">
+      List of image objects, each with `url` and `alt`.
+    </ResponseField>
+    <ResponseField name="variants" type="object[]">
+      Product variants, each with `key`, `label`, `price`, and `stock`.
+    </ResponseField>
+    <ResponseField name="createdAt" type="string" required>
+      ISO 8601 creation timestamp.
+    </ResponseField>
+    <ResponseField name="updatedAt" type="string" required>
+      ISO 8601 last-updated timestamp.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="page" type="number" required>
+  Current page number.
+</ResponseField>
+
+<ResponseField name="limit" type="number" required>
+  Items returned per page.
+</ResponseField>
+
+<ResponseField name="total" type="number" required>
+  Total number of products matching the query.
+</ResponseField>
+
+<ResponseField name="hasMore" type="boolean" required>
+  `true` when additional pages are available.
+</ResponseField>
+
+## Get a product
+
+Retrieve a single product by its ID or slug.
+
+```
+GET /api/stores/:storeId/products/:productId
+```
+
+Both of these requests return the same product:
+
+<CodeGroup>
+
+```bash By ID
+curl https://render.corvex.store/api/stores/$STORE_ID/products/prod_01abc \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```bash By slug
+curl https://render.corvex.store/api/stores/$STORE_ID/products/running-shoe-pro \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+</CodeGroup>
+
+The response is a single product object matching the shape described in the [list response](#response-fields) above, without pagination fields.
+
+## Public product listing
+
+Use the public endpoint in storefront contexts where you do not have or do not want to expose an admin token:
+
+```bash
+curl "https://render.corvex.store/api/public/stores/$STORE_ID/products?status=ACTIVE&limit=12"
+```
+
+The public endpoint supports the same query parameters as the authenticated list endpoint. Only `ACTIVE` products are returned regardless of the `status` filter.
+
+## Common patterns
+
+<AccordionGroup>
+  <Accordion title="Featured products for a homepage section">
+
+```bash
+curl "https://render.corvex.store/api/public/stores/$STORE_ID/products?featured=true&limit=8&sortBy=price&sortOrder=asc"
+```
+
+  </Accordion>
+  <Accordion title="Category page with pagination">
+
+```bash
+curl "https://render.corvex.store/api/public/stores/$STORE_ID/products?category=sneakers&page=2&limit=24"
+```
+
+  </Accordion>
+  <Accordion title="Search results">
+
+```bash
+curl "https://render.corvex.store/api/public/stores/$STORE_ID/products?search=running+shoes&minPrice=50&maxPrice=200"
+```
+
+  </Accordion>
+</AccordionGroup>
+
+## Error codes
+
+| Code | Cause |
+|---|---|
+| `401` | Missing or expired Bearer token on authenticated endpoints |
+| `404` | No product found for the given ID or slug |
+| `429` | Rate limit exceeded — wait for `Retry-After` seconds |
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="API overview" icon="map" href="/api/overview">
+    Base URL, authentication, pagination, and rate limits.
+  </Card>
+  <Card title="Cart" icon="shopping-cart" href="/api/cart">
+    Add products to a cart session.
+  </Card>
+  <Card title="Dynamic data — product" icon="box" href="/data/product">
+    Use product data in LiquidJS templates.
+  </Card>
+  <Card title="Collections and categories" icon="folder" href="/data/collections-categories">
+    Browse and filter by category.
+  </Card>
+</CardGroup>

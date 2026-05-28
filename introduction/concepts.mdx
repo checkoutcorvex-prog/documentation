@@ -1,0 +1,218 @@
+---
+title: "Core concepts — Corvex Store vocabulary"
+description: "The essential terms you'll encounter throughout Corvex Store docs: theme, layout, template, section, block, schema, settings, draft, and published."
+---
+
+Corvex Store uses a specific set of terms to describe how storefronts are structured, rendered, and edited. This page defines each concept clearly so the rest of the documentation makes sense from the start. Read through once — you'll see these terms everywhere.
+
+<Tip>
+These concepts map closely to Shopify theme architecture. If you've built Shopify themes before, most of this will feel familiar.
+</Tip>
+
+## Theme
+
+A **theme** is the complete set of files that defines the appearance and behavior of a store's storefront. It contains layouts, templates, sections, snippets, assets, and configuration.
+
+```
+theme/
+├── layout/
+│   └── theme.liquid           ← HTML shell
+├── templates/
+│   ├── index.liquid
+│   ├── product.liquid
+│   └── collection.liquid
+├── sections/
+│   ├── hero-banner/
+│   ├── product-grid/
+│   └── ...
+├── snippets/
+│   └── product-card.liquid
+├── assets/
+│   ├── theme.css
+│   └── theme.js
+└── config/
+    ├── settings_schema.json
+    └── settings_data.json
+```
+
+See [Theme structure](/themes/structure).
+
+## Layout
+
+The **layout** is the HTML shell that wraps every page. By convention it lives at `layout/theme.liquid`.
+
+It must include two required placeholders:
+
+```liquid
+{{ content_for_header }}   <!-- injects meta tags and critical CSS -->
+{{ content_for_layout }}   <!-- injects the page body -->
+```
+
+See [Layout](/themes/layout).
+
+## Template
+
+A **template** corresponds to a page type: `index`, `product`, `collection`, `cart`, `page`, `search`, or `404`.
+
+The template controls which sections appear and in what order. In practice, most modern templates simply render the sections configured through the editor:
+
+```liquid
+{% for section in template.sections %}
+  {% section section %}
+{% endfor %}
+```
+
+See [Templates](/themes/templates).
+
+## Section
+
+A **section** is the fundamental unit of page composition. It is a reusable component made up of:
+
+- **Liquid template** — HTML and render logic.
+- **JSON schema** — declares the settings the store owner can edit.
+- **Optional CSS** — inline or as a separate file.
+- **Optional JavaScript** — registered in the `CorvexSections` client-side system.
+
+Sections are draggable in the editor, and store owners configure them through the settings panel.
+
+See [Sections overview](/sections/overview).
+
+## Block
+
+A **block** is a repeatable item inside a section. Common examples:
+
+- Slides in a carousel
+- Items in an FAQ accordion
+- Customer testimonials
+
+Blocks have their own settings schema and can be added, removed, and reordered by the store owner in the editor.
+
+See [Blocks](/sections/blocks).
+
+## Schema
+
+The **schema** is a JSON file that declares how the editor should render the settings panel for a section or for the theme's global settings.
+
+- **`sections/X/schema.json`** — settings and blocks for a specific section.
+- **`config/settings_schema.json`** — global theme settings.
+
+See [Schema reference](/sections/schema-reference).
+
+## Settings
+
+**Settings** are the values a store owner assigns to the inputs declared in a schema. You access them in Liquid like this:
+
+```liquid
+<h1>{{ section.settings.title }}</h1>
+<p>{{ block.settings.description }}</p>
+<body style="font-family: {{ settings.font_body }}">
+```
+
+- `section.settings.X` — values for the current section.
+- `block.settings.Y` — values for a specific block.
+- `settings.Z` — global theme values from `config/settings_data.json`.
+
+## Draft vs published
+
+Every theme has two independent versions:
+
+- **Draft** — what the store owner is actively editing. Rendered in the editor preview. Short cache TTL (5 seconds).
+- **Published** — what visitors see. Long cache TTL (30 days) with pre-rendered HTML.
+
+Changes in draft do not affect the published version until the store owner clicks **Publish**. Publishing creates an immutable snapshot. Rolling back means pointing to a previous snapshot — no file restores, no downtime.
+
+See [How it works](/introduction/how-it-works) for the full publish flow.
+
+## Snippet
+
+A **snippet** is a reusable piece of Liquid that you can include in any template or section:
+
+```liquid
+{% include 'product-card' %}
+```
+
+Unlike sections, snippets have no schema and do not appear in the editor sidebar.
+
+See [Snippets](/themes/snippets).
+
+## Registry (CorvexSections)
+
+The **CorvexSections registry** is the client-side system that manages the JavaScript lifecycle of every section on the page. You register a section handler like this:
+
+```javascript
+window.CorvexSections.register('my-section', (el) => {
+  // mount logic
+  return {
+    update: (newEl) => { /* apply new state from editor */ },
+    destroy: () => { /* clean up listeners and timers */ },
+  };
+});
+```
+
+See [Registry](/sections/registry).
+
+## Section lifecycle
+
+Every section's JavaScript goes through three phases on the client:
+
+- **`mount()`** — the section entered the page; initialize.
+- **`update(newEl)`** — the section was re-rendered by the editor; apply new state.
+- **`destroy()`** — the section is leaving the page; clean up listeners and timers.
+
+See [Lifecycle](/sections/lifecycle).
+
+## BaseSection
+
+`BaseSection` is an optional TypeScript class that makes lifecycle management easier. It provides:
+
+- Scoped DOM queries (`this.ref`, `this.$`).
+- Typed options from `data-*` attributes.
+- Auto-cleanup of event listeners via `this.on`.
+- Declarative event delegation via `this.delegate`.
+
+See [BaseSection](/sections/base-section).
+
+## data-section-id and data-section-type
+
+These two HTML attributes are **required** on the root element of every section:
+
+```liquid
+<section data-section-type="{{ section.type }}"
+         data-section-id="{{ section.id }}">
+  ...
+</section>
+```
+
+- `data-section-type` — the registry key (e.g., `"hero-banner"`).
+- `data-section-id` — the unique identifier for this instance (e.g., `"sec_abc123"`).
+
+Without these attributes, the editor cannot select the section and the JavaScript registry cannot initialize it.
+
+See [Data attributes](/sections/data-attributes).
+
+## Editor
+
+The Corvex editor is a visual interface composed of three panels:
+
+- **Left sidebar** — list of sections on the current page, draggable to reorder.
+- **Editor canvas** — iframe showing the storefront in live preview mode.
+- **Right sidebar** — settings form for the currently selected section.
+
+The editor communicates with the iframe via `postMessage` and with the backend via REST and WebSocket.
+
+---
+
+<CardGroup cols={2}>
+  <Card title="How it works" href="/introduction/how-it-works">
+    Rendering pipeline and the draft/publish model in detail.
+  </Card>
+  <Card title="Quickstart" href="/introduction/quickstart">
+    Create your first section in under 10 minutes.
+  </Card>
+  <Card title="Theme structure" href="/themes/structure">
+    Full anatomy of a theme directory.
+  </Card>
+  <Card title="Sections" href="/sections/overview">
+    Deep dive into building sections.
+  </Card>
+</CardGroup>

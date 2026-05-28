@@ -1,0 +1,338 @@
+---
+title: "Schema Reference: Every Section Setting Type Explained"
+description: "All setting types for Corvex Store section schemas — text, color, image_picker, select, range, product_list, blocks, presets, and schema validation rules."
+---
+
+The `schema.json` of a section is a JSON document that declares what shoppers can configure in the editor. The editor generates all input forms automatically from this file, so a well-written schema is the foundation of a polished editing experience.
+
+## Top-level schema structure
+
+```json
+{
+  "name": "string",
+  "category": "string",
+  "settings": [...],
+  "blocks": [...],
+  "max_blocks": 12,
+  "presets": [...]
+}
+```
+
+Each entry in `settings` is either an **input** that stores a value, or a **visual separator** that organizes the editor panel.
+
+## Fields common to all input types
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | string | Yes | Input type (see the sections below). |
+| `id` | string | Yes (for inputs) | Key accessed in Liquid via `section.settings.<id>` or `block.settings.<id>`. |
+| `label` | string | Recommended | Label shown to the shopper in the editor. |
+| `default` | varies | Optional | Initial value. Strongly recommended to avoid `null` in templates. |
+| `info` | string | Optional | Help text displayed below the input. |
+| `placeholder` | string | Optional | Placeholder for text-based inputs (text, textarea, url). |
+
+## Input types
+
+### `text` — short text
+
+```json
+{ "type": "text", "id": "title", "label": "Title", "default": "Welcome" }
+```
+
+Liquid consumption: `{{ section.settings.title }}` → string.
+
+---
+
+### `textarea` — long text
+
+```json
+{ "type": "textarea", "id": "description", "label": "Description", "default": "..." }
+```
+
+Returns a string with line breaks preserved. To render paragraphs, use the `newline_to_br` filter:
+
+```liquid
+<p>{{ section.settings.description | newline_to_br }}</p>
+```
+
+---
+
+### `number` — numeric value
+
+```json
+{ "type": "number", "id": "columns", "label": "Columns", "default": 3 }
+```
+
+Returns a number. The editor validates that the value is numeric on save.
+
+---
+
+### `range` — slider with discrete steps
+
+```json
+{
+  "type": "range",
+  "id": "height",
+  "label": "Height",
+  "min": 200,
+  "max": 800,
+  "step": 50,
+  "default": 500,
+  "unit": "px"
+}
+```
+
+Additional fields: `min`, `max`, `step`, `unit`. This is the preferred UX for dimensions and spacing.
+
+---
+
+### `checkbox` — boolean toggle
+
+```json
+{ "type": "checkbox", "id": "show_arrows", "label": "Show arrows", "default": true }
+```
+
+Returns a boolean. In Liquid, use `{% if section.settings.show_arrows %}`.
+
+---
+
+### `select` — single value from a list
+
+```json
+{
+  "type": "select",
+  "id": "alignment",
+  "label": "Alignment",
+  "options": [
+    { "value": "left",   "label": "Left"   },
+    { "value": "center", "label": "Center" },
+    { "value": "right",  "label": "Right"  }
+  ],
+  "default": "center"
+}
+```
+
+Returns a string containing the chosen `value`.
+
+---
+
+### `multiselect` — multiple values from a list
+
+```json
+{
+  "type": "multiselect",
+  "id": "features",
+  "label": "Active features",
+  "options": [
+    { "value": "wishlist",  "label": "Wishlist"   },
+    { "value": "quickview", "label": "Quick view" },
+    { "value": "compare",   "label": "Compare"    }
+  ],
+  "default": ["wishlist", "quickview"]
+}
+```
+
+Returns an array of strings. Test membership with `contains`:
+
+```liquid
+{% if section.settings.features contains 'wishlist' %}
+  <button data-ref="wishlist-btn">Save</button>
+{% endif %}
+```
+
+---
+
+### `color` — hex color picker
+
+```json
+{ "type": "color", "id": "bg_color", "label": "Background color", "default": "#1a1a2e" }
+```
+
+Returns a string in `#RRGGBB` format. Use it in CSS without additional quotes:
+
+```liquid
+{% style %}
+  .banner-{{ section.id }} { background: {{ section.settings.bg_color }}; }
+{% endstyle %}
+```
+
+---
+
+### `image_picker` — image selection
+
+```json
+{ "type": "image_picker", "id": "hero_image", "label": "Hero image" }
+```
+
+Returns a URL string, or `blank` if no image is selected. Always check before rendering:
+
+```liquid
+{% if section.settings.hero_image != blank %}
+  <img src="{{ section.settings.hero_image | img_url: '1400x' }}" alt="">
+{% endif %}
+```
+
+<Info>
+Shopper images are stored on Cloudflare R2. Use the `img_url` filter to request the exact display size — avoid loading a 3000 px image to display 400 px.
+</Info>
+
+---
+
+### `url` — free-form URL
+
+```json
+{ "type": "url", "id": "link", "label": "Link", "default": "/products" }
+```
+
+Returns a string. Not validated server-side — any text is accepted.
+
+---
+
+### `link_list` — multi-link menu
+
+```json
+{
+  "type": "link_list",
+  "id": "menu_items",
+  "label": "Menu items",
+  "default": [
+    { "text": "Home",     "url": "/" },
+    { "text": "Products", "url": "/products" }
+  ]
+}
+```
+
+Returns an array of `{ text, url }` objects:
+
+```liquid
+<ul>
+  {% for item in section.settings.menu_items %}
+    <li><a href="{{ item.url }}">{{ item.text }}</a></li>
+  {% endfor %}
+</ul>
+```
+
+---
+
+### `product_list` — manual product selection
+
+```json
+{
+  "type": "product_list",
+  "id": "featured_products",
+  "label": "Featured products",
+  "limit": 8
+}
+```
+
+The editor shows a picker that searches your store's products. The saved value is an array of product IDs; the engine **automatically expands** those IDs into full product objects before rendering:
+
+```liquid
+{% for product in section.settings.featured_products %}
+  <div class="product-card">
+    <img src="{{ product.media.images[0].url | img_url: '400x' }}" alt="{{ product.name }}">
+    <h3>{{ product.name }}</h3>
+    <span>{{ product.pricing.price | money }}</span>
+  </div>
+{% endfor %}
+```
+
+See [Product data](/data/product) for all available fields.
+
+---
+
+### `header` — visual separator
+
+```json
+{ "type": "header", "content": "Content" }
+```
+
+Not an input — it only groups settings in the editor panel with a heading label. It has **no `id`**. Use it to organize the UX when a section has many fields:
+
+```json
+"settings": [
+  { "type": "header", "content": "Content" },
+  { "type": "text", "id": "title",    "label": "Title" },
+  { "type": "text", "id": "subtitle", "label": "Subtitle" },
+
+  { "type": "header", "content": "Appearance" },
+  { "type": "color", "id": "bg_color", "label": "Background color" },
+  { "type": "range", "id": "padding",  "label": "Spacing" }
+]
+```
+
+## Blocks in the schema
+
+`blocks` uses the same setting structure as `settings`, but grouped by block type:
+
+```json
+"blocks": [
+  {
+    "type": "slide",
+    "name": "Slide",
+    "settings": [
+      { "type": "image_picker", "id": "image", "label": "Image" },
+      { "type": "text",         "id": "title", "label": "Title" }
+    ]
+  },
+  {
+    "type": "cta",
+    "name": "Call to action",
+    "settings": [
+      { "type": "text", "id": "text", "label": "Button text" },
+      { "type": "url",  "id": "link", "label": "Link"        }
+    ]
+  }
+]
+```
+
+- `max_blocks` defines the total number of blocks accepted across all types combined.
+- Each block receives a unique `id` at runtime, used in `data-block-id`.
+
+See [Blocks](/sections/blocks) for the full Liquid consumption pattern.
+
+## Presets
+
+Presets are initial configurations shown when a shopper adds the section to the canvas:
+
+```json
+"presets": [
+  {
+    "name": "3 testimonials",
+    "settings": { "columns": "3" },
+    "blocks": [
+      { "type": "testimonial", "settings": { "name": "Alex", "rating": 5 } },
+      { "type": "testimonial", "settings": { "name": "Sam",  "rating": 5 } }
+    ]
+  }
+]
+```
+
+When presets exist, the section picker shows the preset `name` in addition to (or instead of) the section `name`.
+
+## Always define defaults
+
+<Warning>
+Define `default` for every setting that is not inherently optional (such as `image_picker`). Without a default, the initial HTML can contain `null` or an empty string, causing broken layouts before the shopper configures anything.
+</Warning>
+
+```json
+{ "type": "text", "id": "title", "label": "Title", "default": "Section title" }
+```
+
+Complement defaults in the template with a Liquid fallback:
+
+```liquid
+<h2>{{ section.settings.title | default: 'Section title' }}</h2>
+```
+
+## Schema validation
+
+The backend validates and rejects invalid schemas when saving a section. Common errors:
+
+| Error | Cause | Fix |
+|---|---|---|
+| `settings[3].id duplicated` | Two inputs share the same `id`. | Rename one. |
+| `settings[5].type invalid` | Type is not in the supported list. | Check spelling (e.g., `imagepicker` → `image_picker`). |
+| `settings[0].options missing` | `select` or `multiselect` has no `options` array. | Add the array. |
+| `max_blocks exceeded at runtime` | Attempt to add more blocks than the limit. | Raise `max_blocks` or remove blocks. |

@@ -1,0 +1,295 @@
+---
+title: "Section Lifecycle: mount, update, and destroy Hooks"
+description: "When and how Corvex Store calls mount, update, and destroy — what to implement in each hook and how to avoid memory leaks and duplicate handlers."
+---
+
+Every Corvex Store JavaScript section has three lifecycle moments. Implementing them correctly is the difference between a stable section and one that causes memory leaks and duplicate event handlers after the editor does a hot update.
+
+<Info>
+The Corvex Store lifecycle is modeled after Shopify's section architecture. The `mount` / `update` / `destroy` semantics are intentionally similar — but tuned for the realities of a live visual editor that uses WebSocket hot updates.
+</Info>
+
+## The three hooks
+
+```
+                         ┌─────────┐
+                         │  mount  │  ← element entered the DOM
+                         └────┬────┘
+                              │
+                              ▼
+      ┌────────────────────┬─────────┐
+      │                    ▼         │
+      │             ┌──────────┐     │  re-render of the same
+      │             │  update  │     │  element (instance preserved)
+      │             └────┬─────┘     │
+      │                  │           │
+      │                  └───────────┘
+      │
+      ▼
+┌────────────┐
+│  destroy   │  ← element left the DOM
+└────────────┘
+```
+
+## `mount()` — initialization
+
+Called **once** when `CorvexSections` detects an element with `data-section-type` in the DOM.
+
+### When it runs
+
+- Initial page load, when `CorvexSections.initAllSections()` is called.
+- When the `MutationObserver` detects a new `[data-section-type]` added to the DOM.
+- When the editor navigates to a different page and new sections are injected.
+
+### What to do in `mount()`
+
+1. Read options via `this.options` (with `BaseSection`) or `el.dataset` directly.
+2. Find child elements with `this.ref('name')` or `el.querySelector('[data-ref="..."]')`.
+3. Attach event listeners — always registering cleanup.
+4. Initialize external libraries (carousel, lightbox, etc.).
+5. Start timers or intervals.
+6. Store references in closure or instance variables, not in global state.
+
+### Example with `BaseSection`
+
+```typescript
+class NewsletterSection extends BaseSection<NewsletterOptions> {
+  static readonly type = 'newsletter';
+
+  mount() {
+    const form = this.ref<HTMLFormElement>('form');
+    if (!form) return;
+
+    this.on(form, 'submit', this.handleSubmit);
+  }
+
+  handleSubmit = async (event: Event) => {
+    event.preventDefault();
+    await fetch(this.options.endpoint, { /* ... */ });
+  };
+}
+```
+
+### Example with a plain function
+
+```typescript
+CorvexSections.register('newsletter', (el) => {
+  const form = el.querySelector<HTMLFormElement>('[data-ref="form"]');
+  if (!form) return;
+
+  const handleSubmit = async (event: Event) => {
+    event.preventDefault();
+    // ...
+  };
+
+  form.addEventListener('submit', handleSubmit);
+
+  return () => {
+    form.removeEventListener('submit', handleSubmit);
+  };
+});
+```
+
+### What NOT to do in `mount()`
+
+- Do not call `document.querySelector('.my-class')` — use `el.querySelector('[data-ref="..."]')`.
+- Do not save state to `window` or a module-level global — use closure or instance variables.
+- Do not add listeners without registering cleanup.
+- Do not assume child elements exist — guard with `if (!el) return`.
+- Do not make synchronous fetches that block initialization — all sections should mount quickly.
+
+## `update(newEl)` — re-render
+
+Called when the same instance receives a new element after a hot update from the editor.
+
+### When it runs
+
+`update` is triggered via an explicit call:
+
+```typescript
+CorvexSections.updateSection(el, newEl);
+```
+
+This happens when:
+
+- The editor patches the DOM while preserving the instance (the standard flow is destroy + init; patch is less common).
+- You call it manually to propagate new options without losing state.
+
+### Default behavior (inherited from `BaseSection`)
+
+If you do not override `update`, the default implementation is:
+
+```typescript
+update(newEl: HTMLElement): void {
+  this.runCleanups();
+  this.el = newEl;
+  this.sectionId = newEl.getAttribute('data-section-id') || this.sectionId;
+  this.options = readOptions<T>(newEl);
+  this.mount();
+}
+```
+
+This is a destroy-lite + re-mount that **preserves the instance identity**. Useful when you want to avoid the cost of destroying and recreating external caches (e.g., a carousel library instance).
+
+### When to override `update()`
+
+Override `update` when you want to **preserve local state** between renders:
+
+```typescript
+class SlideshowSection extends BaseSection<SlideshowOptions> {
+  static readonly type = 'slideshow';
+  private currentSlide = 0;
+
+  mount() {
+    this.renderSlide(this.currentSlide);
+    // attach listeners...
+  }
+
+  update(newEl: HTMLElement) {
+    // currentSlide is NOT reset — user stays on the same slide
+    this.runCleanups();
+    this.el = newEl;
+    this.options = readOptions(newEl);
+
+    const next = this.ref('next-btn');
+    if (next) this.on(next, 'click', () => this.renderSlide(++this.currentSlide));
+
+    this.renderSlide(this.currentSlide);
+  }
+}
+```
+
+<Warning>
+When you override `update`, you take responsibility for cleaning up old listeners. Use `this.addCleanup(fn)` to register cleanup in `mount`, and call `this.runCleanups()` at the top of `update` before re-attaching.
+</Warning>
+
+## `destroy()` — cleanup
+
+Called when the element is removed from the DOM (detected by `MutationObserver`) or explicitly via `CorvexSections.destroySection(el, true)`.
+
+### When it runs
+
+- The shopper removes the section from the page in the editor.
+- The editor navigates to a different page (sections from the old page are unmounted).
+- The element is removed from `document.body` outside the normal flow.
+- `CorvexSections.destroy()` is called to tear down the entire runtime.
+
+### What to do in `destroy()`
+
+1. Remove **all** event listeners added in `mount`.
+2. Clear timers and intervals (`clearInterval`, `clearTimeout`, `cancelAnimationFrame`).
+3. Destroy external library instances (e.g., `carousel.destroy()`).
+4. Disconnect internal observers (`MutationObserver`, `ResizeObserver`, `IntersectionObserver`).
+5. Release references to large closures.
+
+### Automatic cleanup with `BaseSection`
+
+If you used `this.on()` for all listeners, `destroy()` cleans everything up automatically:
+
+```typescript
+class Foo extends BaseSection {
+  mount() {
+    this.on(btn, 'click', handler);           // cleanup registered
+    this.on(window, 'resize', onResize);      // cleanup registered
+    const id = setInterval(tick, 1000);
+    this.addCleanup(() => clearInterval(id)); // manual cleanup
+  }
+  // destroy() is inherited and runs all cleanups in reverse order
+}
+```
+
+### Manual cleanup without `BaseSection`
+
+```typescript
+CorvexSections.register('slideshow', (el) => {
+  const handlers: Array<[HTMLElement, string, EventListener]> = [];
+  let intervalId: number | null = null;
+
+  const btn = el.querySelector('[data-ref="btn"]');
+  const onClick = () => { /* ... */ };
+  btn?.addEventListener('click', onClick);
+  if (btn) handlers.push([btn as HTMLElement, 'click', onClick]);
+
+  intervalId = window.setInterval(tick, 2000);
+
+  return () => {
+    if (intervalId) clearInterval(intervalId);
+    for (const [target, ev, fn] of handlers) {
+      target.removeEventListener(ev, fn);
+    }
+  };
+});
+```
+
+### What NOT to do in `destroy()`
+
+- Do not call `this.el.querySelector(...)` assuming the DOM still exists — the element has already been removed.
+- Do not throw exceptions — they are isolated by the registry, but they pollute the console.
+- Do not re-initialize the section inside `destroy` — use `update` for that.
+
+## Real-world lifecycle flows
+
+### Initial page load
+
+```
+1. Backend renders HTML with <section data-section-type="...">
+2. Bundle scripts load (defer): corvex-slideshow.js, etc.
+3. Each bundle calls CorvexSections.register('type', initFn) — idempotent.
+4. StoreInteractivity calls safeInitSections() after hydration.
+5. CorvexSections.initAllSections() → for each [data-section-type]:
+      → mount() executes
+6. MutationObserver starts listening for DOM changes.
+```
+
+### Editor hot update
+
+```
+1. Shopper changes a setting in the right panel.
+2. Backend receives PUT, invalidates cache, re-renders the page.
+3. WebSocket delivers preview-update with new HTML.
+4. React patches the iframe DOM.
+5. MutationObserver detects:
+     - Removed sections → destroy()
+     - Added sections   → mount()
+6. Intact sections keep their state and listeners.
+```
+
+### Page navigation in the editor
+
+```
+1. Shopper navigates to another page in the preview.
+2. React swaps the HTML root of the storefront SPA.
+3. MutationObserver detects all old sections being removed:
+     → destroy() for each
+4. New sections are added:
+     → mount() for each
+```
+
+## Lifecycle behavior matrix
+
+| Situation | `mount` | `update` | `destroy` |
+|---|---|---|---|
+| First render | Yes | — | — |
+| Shopper changes a setting (DOM recreated) | Yes (new instance) | — | Yes (old instance) |
+| Shopper changes a setting (direct patch) | — | Yes | — |
+| Shopper adds a block | Yes | — | — |
+| Shopper removes the section | — | — | Yes |
+| Editor page navigation | Yes (new sections) | — | Yes (old sections) |
+| Store republish | Yes (after reload) | — | Yes (before reload) |
+
+## Healthy section checklist
+
+<CardGroup cols={2}>
+  <Card title="Anti-patterns" icon="triangle-exclamation" href="/guides/anti-patterns">
+    20 common mistakes including forgotten cleanup and global state.
+  </Card>
+  <Card title="Common issues" icon="bug" href="/debug/common-issues">
+    Symptoms of bad lifecycle implementation and how to fix them.
+  </Card>
+  <Card title="BaseSection" icon="code" href="/sections/base-section">
+    Eliminates 80% of lifecycle errors automatically.
+  </Card>
+  <Card title="Registry" icon="list" href="/sections/registry">
+    How CorvexSections orchestrates all lifecycle calls.
+  </Card>
+</CardGroup>

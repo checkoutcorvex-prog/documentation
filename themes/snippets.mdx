@@ -1,0 +1,226 @@
+---
+title: "Snippets: reusable Liquid template fragments"
+description: "Write reusable Liquid snippets for Corvex Store themes, pass variables with render and include, and understand when to use a snippet versus a full section."
+---
+
+Snippets are reusable pieces of Liquid markup that you include in templates, sections, and other snippets. Think of them as template functions: they keep repeated HTML in one place and let you pass parameters to control their output. In Corvex Store, snippets live in the `snippets/` directory — one `.liquid` file per snippet — and they have no schema, so they do not appear as configurable components in the visual editor.
+
+## Basic example
+
+Create a product card snippet at `snippets/product-card.liquid`:
+
+```liquid
+<article class="product-card">
+  <a href="{{ product.url }}">
+    {% if product.images.size > 0 %}
+      <img src="{{ product.media.images[0].url | img_url: '400x400' }}"
+           alt="{{ product.name }}"
+           loading="lazy">
+    {% endif %}
+
+    <h3>{{ product.name }}</h3>
+
+    <div class="price">
+      {% if product.pricing.discountedPrice %}
+        <span>{{ product.pricing.discountedPrice | money }}</span>
+        <del>{{ product.pricing.price | money }}</del>
+      {% else %}
+        <span>{{ product.pricing.price | money }}</span>
+      {% endif %}
+    </div>
+  </a>
+</article>
+```
+
+Use it in any template or section:
+
+```liquid
+{% for product in products %}
+  {% render 'product-card', product: product %}
+{% endfor %}
+```
+
+## `include` vs `render`
+
+Corvex Store supports both the classic `{% include %}` and the modern `{% render %}` tag. Prefer `{% render %}` for all new snippets.
+
+<Tabs>
+  <Tab title="{% render %} — recommended">
+    `{% render %}` gives the snippet an **isolated scope**. Only variables you explicitly pass are available inside the snippet. This makes snippets predictable, testable, and safe to reuse anywhere.
+
+    ```liquid
+    {% render 'product-card', product: featured_product %}
+    ```
+
+    Pass multiple variables by listing them as named parameters:
+
+    ```liquid
+    {% render 'price-display',
+       product:      current_product,
+       show_compare: true,
+       size:         'large' %}
+    ```
+  </Tab>
+  <Tab title="{% include %} — legacy">
+    `{% include %}` **shares the parent scope** with the snippet. Variables defined inside the snippet can leak out, and the snippet can read any variable from the parent template. Use this only when maintaining older theme code.
+
+    ```liquid
+    {% assign product = collection.products[0] %}
+    {% include 'product-card' %}
+
+    {# or pass the current variable explicitly: #}
+    {% include 'product-card' with featured_product %}
+    ```
+  </Tab>
+</Tabs>
+
+## Passing parameters
+
+With `{% render %}`, all parameters must be explicit:
+
+```liquid
+{% render 'product-card', product: featured_product %}
+```
+
+For optional parameters, provide defaults inside the snippet using the `default` filter:
+
+```liquid
+{# snippets/button.liquid #}
+{% assign variant = variant | default: 'primary' %}
+{% assign size    = size    | default: 'medium' %}
+{% assign target  = target  | default: '_self' %}
+
+<a href="{{ url }}"
+   class="btn btn--{{ variant }} btn--{{ size }}"
+   target="{{ target }}"
+   {% if target == '_blank' %}rel="noopener noreferrer"{% endif %}>
+  {{ text }}
+</a>
+```
+
+Call it with only the arguments you need:
+
+```liquid
+{% render 'button',
+   url:     '/collection/sale',
+   text:    'Shop the sale',
+   variant: 'primary',
+   size:    'large' %}
+
+{% render 'button',
+   url:     'https://example.com',
+   text:    'External link',
+   variant: 'secondary',
+   target:  '_blank' %}
+```
+
+## SVG icon snippet
+
+A common pattern is a single icon snippet that renders different SVGs based on a parameter:
+
+```liquid
+{# snippets/icon.liquid #}
+{% case icon %}
+  {% when 'cart' %}
+    <svg viewBox="0 0 24 24"
+         width="{{ size | default: 24 }}"
+         height="{{ size | default: 24 }}"
+         fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M6 2L3 6v14..."/>
+    </svg>
+  {% when 'user' %}
+    <svg viewBox="0 0 24 24"
+         width="{{ size | default: 24 }}"
+         height="{{ size | default: 24 }}"
+         fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="12" cy="8" r="4"/>
+      <path d="M4 20c0-4..."/>
+    </svg>
+  {% when 'search' %}
+    <svg ...></svg>
+{% endcase %}
+```
+
+```liquid
+{% render 'icon', icon: 'cart', size: 20 %}
+{% render 'icon', icon: 'user' %}
+```
+
+## Snippets vs sections
+
+Snippets and sections are both reusable, but they serve different purposes:
+
+| | Snippet | Section |
+|---|---|---|
+| Reusable across multiple templates | Yes | Yes |
+| Schema / editor settings panel | No | Yes |
+| Drag-and-drop in the editor | No | Yes |
+| JavaScript lifecycle (`mount`/`destroy`) | No | Yes |
+| Dynamic blocks | No | Yes |
+| Isolated scope | Yes (with `render`) | Yes |
+| Best size | Small to medium | Medium to large |
+
+**Use a snippet when:**
+- The same HTML appears in two or more places (product card, price display, breadcrumbs)
+- The merchant does not need to configure it through the editor
+- It has no interactive JavaScript of its own
+
+**Use a section when:**
+- The merchant should be able to add, remove, or reorder it on a page
+- It has configurable settings (colors, text, images)
+- It includes interactive JavaScript or uses blocks
+
+## Snippet directory layout
+
+```
+snippets/
+├── product-card.liquid
+├── collection-card.liquid
+├── price-display.liquid
+├── breadcrumbs.liquid
+├── button.liquid
+├── icon.liquid
+└── svg-icons.liquid
+```
+
+<Note>
+Snippets do not support subdirectories. Every snippet must be a single file directly inside `snippets/`, with a unique name.
+</Note>
+
+## Performance
+
+The Liquid engine inlines snippets during parse — there is no additional network or I/O overhead at render time. For most snippets the performance impact is negligible. Two edge cases to watch:
+
+- A snippet used inside `{% for %}` with hundreds of iterations can accumulate render time if it includes complex filters or conditional chains
+- Very large snippet files (1000+ lines) slow down parse time; split them into focused sub-snippets
+
+## Anti-patterns
+
+<Warning>
+Avoid these common mistakes:
+
+- **Relying on implicit global variables** — always pass variables explicitly via `render` instead of assuming they exist in scope
+- **Recursive snippets** — a snippet that includes itself without a termination condition will cause a render error
+- **Business logic in snippets** — snippets are for presentation; keep price calculations, discount logic, and data transformations in sections or the engine layer
+- **Using a snippet when a section is needed** — if the merchant must configure it, build a section
+- **Files over 1000 lines** — break large snippets into smaller, focused fragments
+</Warning>
+
+## Debugging
+
+If a snippet does not render:
+
+<Steps>
+  <Step title="Check the file path">
+    Confirm the file exists at `snippets/name.liquid` — not in a subdirectory.
+  </Step>
+  <Step title="Check the tag syntax">
+    The name in `{% render 'name' %}` or `{% include 'name' %}` must match the filename exactly, without the `.liquid` extension.
+  </Step>
+  <Step title="Check the render error header">
+    Look for the `X-Render-Error` response header, which contains the Liquid error message when rendering fails.
+  </Step>
+  <Step title="Inspect passed variables">
+    Use `{{ log variable }}` inside the snippet to output the value of a passed variable for debugging.
+  </Step>
+</Steps>

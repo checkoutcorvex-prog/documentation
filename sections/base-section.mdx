@@ -1,0 +1,343 @@
+---
+title: "BaseSection Class API: Typed, Safe Section Development"
+description: "API reference for Corvex Store's BaseSection class — typed options, scoped queries, auto-cleanup listeners, event delegation, and lifecycle hooks."
+---
+
+`BaseSection` is an abstract TypeScript class that provides a structured skeleton for building Corvex Store sections with a clear lifecycle, isolated element lookups, typed options, and automatic cleanup of event listeners.
+
+<Info>
+`BaseSection` is **opt-in**. Existing sections written as plain functions continue to work. `BaseSection` is the recommended path for new sections — it eliminates the most common sources of bugs and memory leaks.
+</Info>
+
+## What `BaseSection` gives you
+
+| Feature | Without `BaseSection` | With `BaseSection` |
+|---|---|---|
+| Scoped element lookup | Manual `el.querySelector(...)` | `this.ref('name')` / `this.$('.selector')` |
+| Typed options | Raw string from `el.dataset.foo` | `this.options.foo` (number / boolean / string) |
+| Auto-cleanup of listeners | Manual array of handlers | `this.on(target, event, fn)` |
+| Event delegation | Manual `closest` + `contains` | `this.delegate('click', { ... })` |
+| Clear lifecycle | Function + returned cleanup | `mount()`, `update()`, `destroy()` |
+| Exception isolation | Manual | Automatic via `defineSection` |
+
+## Minimum template
+
+```typescript
+import { BaseSection, defineSection } from './base-section';
+
+interface NewsletterOptions {
+  endpoint: string;
+  successMessage: string;
+}
+
+class NewsletterSection extends BaseSection<NewsletterOptions> {
+  static readonly type = 'newsletter'; // ← REQUIRED
+
+  mount() {
+    const form = this.ref<HTMLFormElement>('form');
+    if (!form) return;
+
+    this.on(form, 'submit', this.handleSubmit);
+  }
+
+  handleSubmit = async (event: Event) => {
+    event.preventDefault();
+
+    const res = await fetch(this.options.endpoint, {
+      method: 'POST',
+      body: new FormData(event.target as HTMLFormElement),
+    });
+
+    if (res.ok) {
+      alert(this.options.successMessage);
+    }
+  };
+}
+
+defineSection(NewsletterSection);
+```
+
+And the matching `template.liquid`:
+
+```liquid
+<section data-section-type="newsletter"
+         data-section-id="{{ section.id }}"
+         data-endpoint="/api/subscribe"
+         data-success-message="You're subscribed!">
+
+  <form data-ref="form" method="post">
+    <input name="email" type="email" required>
+    <button type="submit">Subscribe</button>
+  </form>
+</section>
+
+{% schema %}
+{
+  "name": "Newsletter",
+  "settings": []
+}
+{% endschema %}
+```
+
+## Instance properties
+
+These properties are automatically populated before `mount()` runs:
+
+```typescript
+class MySection extends BaseSection<MyOptions> {
+  static readonly type = 'my-section';
+
+  mount() {
+    this.el;         // HTMLElement — the section's root element
+    this.sectionId;  // string — value of data-section-id
+    this.options;    // MyOptions — automatically read from data-*
+  }
+}
+```
+
+## Lifecycle hooks
+
+```typescript
+abstract mount(): void;               // REQUIRED — subclass must implement
+update(newEl: HTMLElement): void;     // optional — default: destroy + mount
+destroy(): void;                      // optional — default: runCleanups()
+```
+
+See [Lifecycle](/sections/lifecycle) for a full explanation of when each hook fires and how to implement `update` to preserve state.
+
+## Scoped element lookup
+
+All lookup methods search **only within `this.el`**. They never touch `document`. This guarantees isolation — two instances of the same section on the same page cannot interfere with each other.
+
+```typescript
+this.ref<HTMLInputElement>('email')   // one element via [data-ref="email"]
+this.refs<HTMLLIElement>('item')      // all elements via [data-ref="item"]
+this.$<HTMLDivElement>('.foo')        // scoped querySelector (fallback)
+this.$$('li.item')                    // scoped querySelectorAll
+```
+
+<Warning>
+Always use these scoped helpers instead of `document.querySelector`. Global queries break the moment a section appears twice on the same page.
+</Warning>
+
+## Event listeners with auto-cleanup
+
+```typescript
+// HTMLElement
+this.on(btn, 'click', (ev) => { /* ... */ });
+
+// Window
+this.on(window, 'resize', onResize);
+
+// Document
+this.on(document, 'keydown', onKey);
+
+// With options (passive, capture)
+this.on(el, 'scroll', onScroll, { passive: true });
+```
+
+Every listener registered with `this.on()` is **automatically removed** when `destroy()` runs. Zero memory leak risk.
+
+## Manual cleanup for non-listener resources
+
+```typescript
+mount() {
+  const id = setInterval(this.tick, 1000);
+  this.addCleanup(() => clearInterval(id));
+
+  const observer = new IntersectionObserver(/* ... */);
+  observer.observe(this.el);
+  this.addCleanup(() => observer.disconnect());
+}
+```
+
+`this.addCleanup(fn)` registers any function to run during `destroy()`, in reverse registration order.
+
+## Event delegation
+
+```typescript
+this.delegate('click', {
+  'open-modal':  (trigger) => this.openModal(),
+  'close-modal': (trigger) => this.closeModal(),
+  'add-to-cart': (trigger) => {
+    const variantId = trigger.dataset.variantId;
+    this.addToCart(variantId);
+  },
+});
+```
+
+`delegate` attaches a single listener to the section root and routes click events to the matching `data-action` handler. This is cleaner than one listener per button and automatically works for blocks added dynamically by the editor.
+
+## Typed options
+
+### How `data-*` becomes `options`
+
+Any `data-*` attribute on the root element that is **not reserved** is read into `this.options` with automatic type coercion:
+
+- kebab-case → camelCase (`data-autoplay-speed` → `autoplaySpeed`)
+- `"true"` / `"false"` → boolean
+- Pure numeric strings → number
+- Everything else → string
+
+```liquid
+<section data-section-type="slideshow"
+         data-section-id="{{ section.id }}"
+         data-autoplay="true"
+         data-autoplay-speed="5000"
+         data-loop="false"
+         data-label="Main carousel">
+```
+
+```typescript
+interface SlideshowOptions {
+  autoplay: boolean;
+  autoplaySpeed: number;
+  loop: boolean;
+  label: string;
+}
+
+class SlideshowSection extends BaseSection<SlideshowOptions> {
+  static readonly type = 'slideshow';
+
+  mount() {
+    if (this.options.autoplay) {
+      const id = setInterval(this.next, this.options.autoplaySpeed);
+      this.addCleanup(() => clearInterval(id));
+    }
+  }
+}
+```
+
+### Reserved attributes excluded from options
+
+These attributes are never mapped to `this.options`:
+
+```
+data-section-type              data-ref
+data-section-id                data-action
+data-section-initialized       data-block
+data-section-failed            data-block-id
+data-section-error             data-state
+data-section-duplicate-ignored
+```
+
+## Overriding `update()` to preserve state
+
+The default `update` implementation runs cleanups and re-mounts. Override it when you need to keep local state:
+
+```typescript
+class SlideshowSection extends BaseSection<SlideshowOptions> {
+  static readonly type = 'slideshow';
+  private currentSlide = 0;
+
+  mount() {
+    this.renderSlide(this.currentSlide);
+    this.attachEvents();
+  }
+
+  update(newEl: HTMLElement) {
+    // currentSlide is preserved across the re-render
+    this.runCleanups();
+    this.el = newEl;
+    this.options = readOptions<SlideshowOptions>(newEl);
+    this.attachEvents();
+    this.renderSlide(this.currentSlide);
+  }
+
+  private attachEvents() {
+    // re-attach listeners to the new DOM
+  }
+}
+```
+
+## Comparing `BaseSection` to the functional form
+
+<CodeGroup>
+```typescript With BaseSection
+class CounterSection extends BaseSection {
+  static readonly type = 'counter';
+  private count = 0;
+
+  mount() {
+    const btn = this.ref<HTMLButtonElement>('btn');
+    if (!btn) return;
+    this.on(btn, 'click', () => {
+      btn.textContent = String(++this.count);
+    });
+  }
+}
+
+defineSection(CounterSection);
+```
+
+```typescript Functional form
+CorvexSections.register('counter', (el) => {
+  const btn = el.querySelector<HTMLButtonElement>('[data-ref="btn"]');
+  if (!btn) return;
+
+  let count = 0;
+  const onClick = () => {
+    btn.textContent = String(++count);
+  };
+
+  btn.addEventListener('click', onClick);
+
+  return () => {
+    btn.removeEventListener('click', onClick);
+  };
+});
+```
+</CodeGroup>
+
+The functional form is more concise for trivial sections. Use `BaseSection` when a section has multiple handlers, typed options, event delegation, stateful `update`, or requires guaranteed cleanup.
+
+## Common errors
+
+<AccordionGroup>
+  <Accordion title="'The class passed does not define static readonly type'">
+    ```typescript
+    // ❌ WRONG
+    class Foo extends BaseSection { /* ... */ }
+    defineSection(Foo); // throws: The class passed does not define `static readonly type`.
+
+    // ✅ CORRECT
+    class Foo extends BaseSection {
+      static readonly type = 'foo';
+    }
+    defineSection(Foo);
+    ```
+  </Accordion>
+  <Accordion title="this.options.autoplaySpeed is undefined">
+    Cause: you wrote `data-autoplay-speed` in the template but expected `autoplay_speed` in options.
+
+    The coercion is always kebab-case → camelCase:
+
+    - `data-autoplay-speed` → `autoplaySpeed`
+    - `data-on-submit-url` → `onSubmitUrl`
+  </Accordion>
+  <Accordion title="Listener added but never removed">
+    Cause: you used `addEventListener` directly instead of `this.on()`.
+
+    ```typescript
+    // ❌ leak — not removed during destroy
+    btn.addEventListener('click', handler);
+
+    // ✅ automatically removed
+    this.on(btn, 'click', handler);
+
+    // ✅ also OK — manual cleanup
+    btn.addEventListener('click', handler);
+    this.addCleanup(() => btn.removeEventListener('click', handler));
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## When not to use `BaseSection`
+
+For extremely simple sections (a single menu toggle, for example), the functional form is more economical. Reach for `BaseSection` when:
+
+- The section has multiple event handlers.
+- You want typed options without manual casting.
+- You want declarative event delegation.
+- You need to preserve state between `update` calls.
+- You want guaranteed auto-cleanup without writing cleanup arrays.

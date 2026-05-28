@@ -1,0 +1,301 @@
+---
+title: "Webhooks — receive Corvex Store event notifications"
+description: "Register URLs to receive order.created, cart.abandoned, and theme.published events. Learn the payload format and how to verify HMAC-SHA256 signatures."
+---
+
+Corvex Store webhooks notify your server when key events happen in a store. Instead of polling the API, you register a URL and the platform delivers an HTTP POST request to it whenever a matching event fires. This page explains how to register a webhook, what the three supported events look like, and how to verify that requests are genuinely from Corvex.
+
+## Supported events
+
+| Event | When it fires |
+|---|---|
+| `order.created` | A new order is placed in the store |
+| `cart.abandoned` | A cart session has been inactive for more than 30 minutes with items still in it |
+| `theme.published` | A draft is successfully published and the storefront is updated |
+
+## Registering a webhook
+
+Register a webhook URL from your store settings or via the Admin API. Provide the URL that Corvex should POST to and the list of events you want to receive.
+
+<Steps>
+  <Step title="Choose your endpoint URL">
+    Your server must be reachable over HTTPS. Corvex will not deliver to plain HTTP endpoints in production. Make sure your endpoint responds with a `2xx` status within 10 seconds, or the delivery is marked as failed and retried.
+  </Step>
+  <Step title="Register via the API">
+
+```bash
+curl -X POST https://render.corvex.store/api/stores/$STORE_ID/webhooks \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url":    "https://your-server.example.com/webhooks/corvex",
+    "events": ["order.created", "cart.abandoned", "theme.published"]
+  }'
+```
+
+  </Step>
+  <Step title="Store your signing secret">
+    The API response includes a `secret` field. Store this value securely — you use it to verify the `x-corvex-signature` header on every incoming request.
+
+```json
+{
+  "id":     "wh_01abc",
+  "url":    "https://your-server.example.com/webhooks/corvex",
+  "events": ["order.created", "cart.abandoned", "theme.published"],
+  "secret": "whsec_a1b2c3d4e5f6..."
+}
+```
+
+<Warning>
+Save the `secret` immediately. Corvex does not expose it again after this response.
+</Warning>
+
+  </Step>
+</Steps>
+
+## Payload format
+
+Every webhook delivery is an HTTP POST with `Content-Type: application/json`. All events share the same top-level envelope:
+
+```json
+{
+  "event":     "theme.published",
+  "storeId":   "store_01",
+  "timestamp": "2025-04-15T12:34:56.789Z",
+  "data":      { ... }
+}
+```
+
+### `order.created`
+
+```json
+{
+  "event":     "order.created",
+  "storeId":   "store_01",
+  "timestamp": "2025-04-15T12:34:56.789Z",
+  "data": {
+    "orderId":   "ord_01xyz",
+    "sessionId": "sess_01abc",
+    "total":     259.98,
+    "currency":  "BRL",
+    "items": [
+      {
+        "productId":   "prod_01abc",
+        "variantKey":  "size-40",
+        "name":        "Running Shoe Pro",
+        "quantity":    2,
+        "price":       129.99
+      }
+    ]
+  }
+}
+```
+
+### `cart.abandoned`
+
+```json
+{
+  "event":     "cart.abandoned",
+  "storeId":   "store_01",
+  "timestamp": "2025-04-15T12:34:56.789Z",
+  "data": {
+    "sessionId": "sess_01abc",
+    "subtotal":  129.99,
+    "itemCount": 1,
+    "items": [
+      {
+        "productId":   "prod_01abc",
+        "variantKey":  "size-40",
+        "name":        "Running Shoe Pro",
+        "quantity":    1,
+        "price":       129.99
+      }
+    ],
+    "lastActiveAt": "2025-04-15T12:00:00.000Z"
+  }
+}
+```
+
+### `theme.published`
+
+```json
+{
+  "event":     "theme.published",
+  "storeId":   "store_01",
+  "timestamp": "2025-04-15T12:34:56.789Z",
+  "data": {
+    "versionId":     "v_1775454960302_def",
+    "description":   "Summer sale hero update",
+    "pagesRendered": 5,
+    "duration":      1340
+  }
+}
+```
+
+## Verifying signatures
+
+Every request from Corvex includes an `x-corvex-signature` header containing an HMAC-SHA256 signature of the raw request body, computed using your webhook secret.
+
+Always verify this signature before processing the payload. Reject any request where the signature does not match.
+
+### How the signature is computed
+
+```
+HMAC-SHA256(secret, rawRequestBody)
+```
+
+The signature is the hex digest of the HMAC. Corvex computes it over the raw JSON bytes — do not parse the body before verifying.
+
+### Verification examples
+
+<CodeGroup>
+
+```javascript Node.js
+const crypto = require('crypto');
+
+function verifyCorvexSignature(secret, rawBody, signatureHeader) {
+  const expected = crypto
+    .createHmac('sha256', secret)
+    .update(rawBody)
+    .digest('hex');
+
+  return crypto.timingSafeEqual(
+    Buffer.from(expected),
+    Buffer.from(signatureHeader)
+  );
+}
+
+// Express example
+app.post('/webhooks/corvex', express.raw({ type: 'application/json' }), (req, res) => {
+  const signature = req.headers['x-corvex-signature'];
+  const secret    = process.env.CORVEX_WEBHOOK_SECRET;
+
+  if (!verifyCorvexSignature(secret, req.body, signature)) {
+    return res.status(401).json({ error: 'Invalid signature' });
+  }
+
+  const event = JSON.parse(req.body);
+  // handle event.event ...
+  res.sendStatus(200);
+});
+```
+
+```python Python
+import hmac
+import hashlib
+
+def verify_corvex_signature(secret: str, raw_body: bytes, signature_header: str) -> bool:
+    expected = hmac.new(
+        secret.encode('utf-8'),
+        raw_body,
+        hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(expected, signature_header)
+
+# Flask example
+from flask import Flask, request, abort
+import os
+
+app = Flask(__name__)
+
+@app.route('/webhooks/corvex', methods=['POST'])
+def handle_webhook():
+    signature = request.headers.get('x-corvex-signature', '')
+    secret    = os.environ['CORVEX_WEBHOOK_SECRET']
+    raw_body  = request.get_data()
+
+    if not verify_corvex_signature(secret, raw_body, signature):
+        abort(401)
+
+    event = request.get_json(force=True)
+    # handle event['event'] ...
+    return '', 200
+```
+
+```php PHP
+<?php
+function verifyCorvexSignature(string $secret, string $rawBody, string $signatureHeader): bool {
+    $expected = hash_hmac('sha256', $rawBody, $secret);
+    return hash_equals($expected, $signatureHeader);
+}
+
+$secret    = getenv('CORVEX_WEBHOOK_SECRET');
+$rawBody   = file_get_contents('php://input');
+$signature = $_SERVER['HTTP_X_CORVEX_SIGNATURE'] ?? '';
+
+if (!verifyCorvexSignature($secret, $rawBody, $signature)) {
+    http_response_code(401);
+    exit('Invalid signature');
+}
+
+$event = json_decode($rawBody, true);
+// handle $event['event'] ...
+http_response_code(200);
+```
+
+</CodeGroup>
+
+<Warning>
+Always use a constant-time comparison function (`crypto.timingSafeEqual`, `hmac.compare_digest`, `hash_equals`) to compare signatures. Regular string equality is vulnerable to timing attacks.
+</Warning>
+
+## Delivery and retries
+
+- Corvex expects a `2xx` response within **10 seconds**. 
+- If your endpoint times out or returns a non-`2xx` status, Corvex retries the delivery with exponential backoff: after 1 minute, 5 minutes, 30 minutes, and 2 hours.
+- After 4 failed attempts, the delivery is marked as permanently failed and no further retries are made.
+
+<Tip>
+Respond with `200` immediately and process the event asynchronously using a background job or queue. This keeps your webhook handler fast and prevents timeouts on slow operations.
+</Tip>
+
+## Managing webhooks
+
+<AccordionGroup>
+  <Accordion title="List registered webhooks">
+
+```bash
+curl https://render.corvex.store/api/stores/$STORE_ID/webhooks \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+  </Accordion>
+  <Accordion title="Delete a webhook">
+
+```bash
+curl -X DELETE https://render.corvex.store/api/stores/$STORE_ID/webhooks/$WEBHOOK_ID \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+  </Accordion>
+  <Accordion title="Update a webhook URL or events">
+
+```bash
+curl -X PATCH https://render.corvex.store/api/stores/$STORE_ID/webhooks/$WEBHOOK_ID \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url":    "https://your-server.example.com/webhooks/corvex-v2",
+    "events": ["order.created"]
+  }'
+```
+
+  </Accordion>
+</AccordionGroup>
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="API overview" icon="map" href="/api/overview">
+    Authentication, rate limits, and HTTP conventions.
+  </Card>
+  <Card title="Cart" icon="shopping-cart" href="/api/cart">
+    Cart sessions that trigger `cart.abandoned` events.
+  </Card>
+  <Card title="WebSocket" icon="bolt" href="/api/websocket">
+    Real-time events for the editor preview (not webhooks).
+  </Card>
+  <Card title="Common issues" icon="triangle-alert" href="/debug/common-issues">
+    Troubleshoot webhook delivery failures.
+  </Card>
+</CardGroup>

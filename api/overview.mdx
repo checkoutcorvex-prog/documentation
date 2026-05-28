@@ -1,0 +1,301 @@
+---
+title: "Corvex Store REST API — overview and conventions"
+description: "Learn the base URL, authentication options, HTTP conventions, pagination, rate limits, CORS policy, and the full endpoint map for the Corvex Store REST API."
+---
+
+The Corvex Store REST API lets you read and write store data programmatically — list products, manage cart sessions, publish themes, upload assets, and more. Every response is JSON. This page covers the conventions and authentication rules that apply across all endpoints. Use the quick reference table at the bottom to find the group you need.
+
+## Base URL
+
+| Environment | Base URL |
+|---|---|
+| Development | `http://localhost:3000/api` |
+| Production | `https://render.corvex.store/api` |
+
+All paths below are relative to this base URL.
+
+## Authentication
+
+Different endpoint groups require different authentication methods. Use the table below to find the right approach for what you're building.
+
+| Endpoint group | Auth method |
+|---|---|
+| Public storefront (products, cart read) | None — no credentials required |
+| Cart write operations | Session-based (cookie + `x-session-id` header) |
+| Admin operations (pages, themes, assets) | Bearer token in `Authorization` header |
+
+### Public endpoints
+
+The following endpoints are open and require no credentials:
+
+```
+GET /api/stores/:storeId/full-page/...
+GET /api/stores/:storeId/products
+GET /api/public/stores/:storeId/products
+GET /api/public/stores/:storeId/categories
+GET /api/public/stores/:storeId/collections
+```
+
+### Session-based auth
+
+Cart write operations and storefront interactions use session-based auth. Include the session identifier on every request:
+
+```
+Cookie: session=<session-id>
+x-session-id: <session-id>
+```
+
+### Bearer token (admin)
+
+Operations that create or modify store data — pages, sections, themes, files, settings — require an admin Bearer token:
+
+```
+Authorization: Bearer <jwt>
+```
+
+<Tip>
+To get a Bearer token, authenticate through the Corvex admin dashboard and copy the API token from your account settings.
+</Tip>
+
+## Store identification
+
+Every endpoint that operates on a store needs a `storeId`. You can pass it in three ways, in order of precedence:
+
+1. **Path parameter** — `/api/stores/:storeId/...` (recommended for API integrations)
+2. **Header** — `x-store-id: <id>`
+3. **Subdomain/host** — resolved automatically from the request host
+
+## HTTP conventions
+
+- Standard HTTP verbs: `GET`, `POST`, `PATCH`, `PUT`, `DELETE`
+- Request body: `application/json` for all endpoints except file upload, which uses `multipart/form-data`
+- All responses include two diagnostic headers:
+
+```
+X-Request-Id: req_abc123    # trace ID for support
+X-Response-Time: 12ms       # server processing time
+```
+
+### Status codes
+
+| Code | Meaning |
+|---|---|
+| `200` | OK |
+| `201` | Created |
+| `204` | No Content (successful DELETE) |
+| `400` | Bad Request — malformed syntax |
+| `401` | Unauthorized — missing or invalid credentials |
+| `403` | Forbidden — valid credentials but insufficient permissions |
+| `404` | Not Found |
+| `409` | Conflict — duplicate slug or ID |
+| `422` | Unprocessable Entity — validation failed |
+| `429` | Too Many Requests — rate limit exceeded |
+| `500` | Internal Server Error |
+
+### Error response shape
+
+All error responses follow the same structure:
+
+```json
+{
+  "error":   "ValidationError",
+  "message": "Field 'name' is required",
+  "details": { "field": "name" }
+}
+```
+
+## Pagination
+
+List endpoints accept `page` and `limit` query parameters:
+
+```
+GET /api/stores/:storeId/products?page=1&limit=20
+```
+
+Every paginated response includes:
+
+```json
+{
+  "items":   [...],
+  "page":    1,
+  "limit":   20,
+  "total":   148,
+  "hasMore": true
+}
+```
+
+`limit` caps at 100 items per page.
+
+## Filtering
+
+Pass filter criteria as query parameters:
+
+```
+GET /api/stores/:storeId/products?featured=true&status=ACTIVE&limit=12
+```
+
+See [Products](/api/products) for the full list of product filters.
+
+## Rate limits
+
+| Endpoint group | Limit |
+|---|---|
+| Public render endpoints | 1,000 requests/min per IP |
+| Admin API | 100 requests/min per token |
+| Cart operations | 30 requests/min per session |
+| File upload | 10 requests/min per store |
+
+When you exceed a limit, the API responds with:
+
+```
+HTTP 429 Too Many Requests
+Retry-After: 30
+```
+
+```json
+{
+  "error":   "RateLimitExceeded",
+  "message": "Try again in 30 seconds"
+}
+```
+
+Wait for the number of seconds in `Retry-After` before retrying.
+
+## CORS
+
+Public endpoints (`/full-page/*`, `/cart/*`, `/products`) respond with:
+
+```
+Access-Control-Allow-Origin: *
+```
+
+Admin endpoints only allow requests from:
+
+```
+Access-Control-Allow-Origin: https://app.usecorvex.com.br
+Access-Control-Allow-Credentials: true
+```
+
+## Idempotency
+
+Cart add and update operations are idempotent per `(productId, variantKey)` — re-sending the same add request updates the quantity rather than duplicating the line item.
+
+Creation endpoints (`POST`) return `409 Conflict` when a resource with the same slug or unique identifier already exists.
+
+## API versioning
+
+The current API is v1 (implicit — no version prefix in the URL). Breaking changes will ship under `/api/v2/...` while `/api/...` remains unchanged.
+
+## Endpoint quick reference
+
+<AccordionGroup>
+  <Accordion title="Stores">
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/stores` | Create a store |
+| `GET` | `/api/stores/:id` | Get store info |
+| `PATCH` | `/api/stores/:id` | Update store metadata |
+| `GET` | `/api/stores/:id/settings` | Get global theme settings |
+| `PUT` | `/api/stores/:id/settings` | Update global theme settings |
+
+  </Accordion>
+  <Accordion title="Pages">
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/stores/:id/pages` | List pages |
+| `POST` | `/api/stores/:id/pages` | Create a page |
+| `GET` | `/api/stores/:id/pages/:pid` | Get page detail |
+| `PATCH` | `/api/stores/:id/pages/:pid` | Update page metadata |
+| `DELETE` | `/api/stores/:id/pages/:pid` | Delete a page |
+| `POST` | `/api/stores/:id/pages/:pid/sections` | Add a section |
+| `PATCH` | `/api/stores/:id/pages/:pid/sections/:sid` | Update section settings |
+| `DELETE` | `/api/stores/:id/pages/:pid/sections/:sid` | Remove a section |
+| `POST` | `/api/stores/:id/pages/:pid/sections/reorder` | Reorder sections |
+| `POST` | `/api/stores/:id/pages/:pid/sections/:sid/blocks` | Add a block |
+| `PATCH` | `/api/stores/:id/pages/:pid/sections/:sid/blocks/:bid` | Update a block |
+| `DELETE` | `/api/stores/:id/pages/:pid/sections/:sid/blocks/:bid` | Remove a block |
+
+  </Accordion>
+  <Accordion title="Products">
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/stores/:id/products` | List products (authenticated) |
+| `GET` | `/api/stores/:id/products/:productId` | Get product by ID or slug |
+| `GET` | `/api/public/stores/:id/products` | List products (public) |
+
+See [Products](/api/products) for query parameters and response shape.
+
+  </Accordion>
+  <Accordion title="Cart">
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/stores/:id/cart` | Get current cart |
+| `POST` | `/api/stores/:id/cart/add` | Add item to cart |
+| `PATCH` | `/api/stores/:id/cart/update` | Update item quantity |
+| `DELETE` | `/api/stores/:id/cart/remove` | Remove item from cart |
+
+See [Cart](/api/cart) for session auth details and response shape.
+
+  </Accordion>
+  <Accordion title="Themes">
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/stores/:id/themes` | List available themes |
+| `POST` | `/api/stores/:id/themes/install` | Install a theme |
+| `POST` | `/api/stores/:id/themes/:tid/activate` | Activate a theme |
+| `POST` | `/api/stores/:id/themes/:tid/publish` | Publish the current draft |
+| `POST` | `/api/stores/:id/themes/:tid/rollback` | Roll back to previous version |
+| `POST` | `/api/stores/:id/publish` | Publish draft (all changes) |
+| `GET` | `/api/stores/:id/version-status` | Check unpublished changes |
+
+  </Accordion>
+  <Accordion title="Files">
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/stores/:id/files` | Upload a file (multipart) |
+| `GET` | `/api/stores/:id/files` | List files |
+| `DELETE` | `/api/stores/:id/files/:fid` | Delete a file |
+
+  </Accordion>
+  <Accordion title="Render">
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/stores/:id/full-page/*` | Render a full page (public) |
+| `POST` | `/api/render/section` | Render a single section (editor) |
+
+  </Accordion>
+  <Accordion title="Webhooks">
+
+Register URLs to receive `order.created`, `cart.abandoned`, and `theme.published` events. See [Webhooks](/api/webhooks) for payload format and signature verification.
+
+  </Accordion>
+  <Accordion title="WebSocket">
+
+Real-time preview events over Socket.IO. See [WebSocket](/api/websocket) for connection details and available events.
+
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Products" icon="box" href="/api/products">
+    List, search, and filter products with query parameters and curl examples.
+  </Card>
+  <Card title="Cart" icon="shopping-cart" href="/api/cart">
+    Add, update, and remove cart items with session-based auth.
+  </Card>
+  <Card title="Webhooks" icon="webhook" href="/api/webhooks">
+    Register URLs and verify HMAC signatures for store events.
+  </Card>
+  <Card title="WebSocket" icon="bolt" href="/api/websocket">
+    Connect via Socket.IO for real-time editor preview events.
+  </Card>
+</CardGroup>

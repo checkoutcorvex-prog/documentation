@@ -1,0 +1,747 @@
+---
+title: "Copy-Paste Section Templates for Corvex Store"
+description: "Ready-made copy-paste boilerplates for Corvex Store: static sections, block-based sections, interactive sections, product cards, and full theme layouts."
+---
+
+Corvex Store follows consistent conventions across every section type — the same naming rules, the same data attributes, the same CSS scoping pattern. These templates give you a correct, working starting point so you can focus on your section's unique logic rather than boilerplate. Copy a template, replace the placeholders, and adjust the schema and styles to match your use case.
+
+<Warning>
+**Naming consistency is critical.** The same identifier must appear in exactly four places:
+
+| Location | Value |
+|---|---|
+| Directory in the file system | `sections/<type>/` |
+| `data-section-type` in the template | `"<type>"` |
+| `static readonly type` in the TypeScript class | `'<type>'` |
+| Key in `SECTION_SCRIPT_MAP` | `'<type>'` |
+
+Use **kebab-case** throughout (for example: `product-form`, `hero-banner`). Replace `<type>` in the snippets below with the same value in all four places before running a build.
+</Warning>
+
+<Info>
+**How to use these templates:** copy the relevant block, paste it into the correct file path, substitute the placeholders (`<type>`, `<TYPE>`) with your real names, then adjust the schema settings and styles.
+</Info>
+
+---
+
+## 1. Static section (no JavaScript)
+
+Use this template for sections that render entirely server-side — banners, feature lists, rich text blocks, image-text pairs.
+
+<CodeGroup>
+```json sections/<type>/schema.json
+{
+  "name":     "Human-Readable Name",
+  "category": "content",
+  "settings": [
+    { "type": "text",  "id": "title", "label": "Title",      "default": "My title" },
+    { "type": "color", "id": "bg",    "label": "Background", "default": "#f5f5f5"  }
+  ],
+  "presets": [
+    {
+      "name":     "Default",
+      "settings": { "title": "Welcome", "bg": "#fafafa" }
+    }
+  ]
+}
+```
+
+```liquid sections/<type>/template.liquid
+{% style %}
+  .<type>-{{ section.id }} {
+    background: {{ section.settings.bg }};
+    padding: 4rem 2rem;
+    text-align: center;
+  }
+
+  .<type>-{{ section.id }} .title {
+    font-size: clamp(1.5rem, 4vw, 3rem);
+    margin: 0;
+  }
+
+  @media (min-width: 768px) {
+    .<type>-{{ section.id }} {
+      padding: 6rem 4rem;
+    }
+  }
+{% endstyle %}
+
+<section class="<type> <type>-{{ section.id }}"
+         data-section-type="{{ section.type }}"
+         data-section-id="{{ section.id }}">
+
+  {% if section.settings.title != blank %}
+    <h2 class="title">{{ section.settings.title }}</h2>
+  {% endif %}
+
+</section>
+```
+</CodeGroup>
+
+---
+
+## 2. Section with repeatable blocks
+
+Use this template for FAQs, testimonials, feature grids, slides, or any section where merchants add and reorder items.
+
+<CodeGroup>
+```json sections/<type>/schema.json
+{
+  "name":     "Repeatable List",
+  "category": "content",
+  "settings": [
+    { "type": "text", "id": "title", "label": "Section title", "default": "Items" }
+  ],
+  "blocks": [
+    {
+      "type": "item",
+      "name": "Item",
+      "settings": [
+        { "type": "text",     "id": "name",        "label": "Name",        "default": "Item" },
+        { "type": "textarea", "id": "description", "label": "Description", "default": ""     }
+      ]
+    }
+  ],
+  "max_blocks": 20,
+  "presets": [
+    {
+      "name": "3 items",
+      "blocks": [
+        { "type": "item", "settings": { "name": "First",  "description": "..." } },
+        { "type": "item", "settings": { "name": "Second", "description": "..." } },
+        { "type": "item", "settings": { "name": "Third",  "description": "..." } }
+      ]
+    }
+  ]
+}
+```
+
+```liquid sections/<type>/template.liquid
+{% style %}
+  .list-{{ section.id }} {
+    padding: 3rem 1rem;
+  }
+
+  @media (min-width: 768px) {
+    .list-{{ section.id }} .items {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1rem;
+    }
+  }
+{% endstyle %}
+
+<section class="<type> list-{{ section.id }}"
+         data-section-type="{{ section.type }}"
+         data-section-id="{{ section.id }}">
+
+  {% if section.settings.title != blank %}
+    <h2>{{ section.settings.title }}</h2>
+  {% endif %}
+
+  {% if section.blocks.size > 0 %}
+    <div class="items">
+      {% for block in section.blocks %}
+        <article class="item"
+                 data-block="{{ block.type }}"
+                 data-block-id="{{ block.id }}">
+          <h3>{{ block.settings.name }}</h3>
+          <p>{{ block.settings.description }}</p>
+        </article>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p class="empty-state">Add blocks in the editor.</p>
+  {% endif %}
+
+</section>
+```
+</CodeGroup>
+
+---
+
+## 3. Interactive section with BaseSection
+
+Use this template when your section needs clicks, state, timers, or any client-side behavior. This is the canonical pattern for interactive Corvex sections.
+
+<Tabs>
+  <Tab title="TypeScript class">
+```typescript
+// src/lib/sections/<type>.ts
+import { BaseSection, defineSection } from './base-section';
+
+interface <TYPE>Options {
+  autoplay: boolean;
+  interval: number;
+}
+
+class <TYPE>Section extends BaseSection<<TYPE>Options> {
+  static readonly type = '<type>';
+
+  private currentIndex = 0;
+
+  mount() {
+    this.delegate('click', {
+      'prev': () => this.prev(),
+      'next': () => this.next(),
+    });
+
+    if (this.options.autoplay) {
+      const id = setInterval(() => this.next(), this.options.interval);
+      this.addCleanup(() => clearInterval(id));
+    }
+
+    this.render();
+  }
+
+  private prev() {
+    this.currentIndex--;
+    this.render();
+  }
+
+  private next() {
+    this.currentIndex++;
+    this.render();
+  }
+
+  private render() {
+    const items = this.refs<HTMLElement>('item');
+    if (items.length === 0) return;
+
+    const active = ((this.currentIndex % items.length) + items.length) % items.length;
+
+    items.forEach((el, i) => {
+      el.dataset.state = i === active ? 'active' : 'idle';
+    });
+  }
+}
+
+defineSection(<TYPE>Section);
+```
+  </Tab>
+  <Tab title="Liquid template">
+```liquid
+{% style %}
+  .<type>-{{ section.id }} [data-ref="item"] { display: none; }
+  .<type>-{{ section.id }} [data-ref="item"][data-state="active"] { display: block; }
+{% endstyle %}
+
+<section class="<type> <type>-{{ section.id }}"
+         data-section-type="{{ section.type }}"
+         data-section-id="{{ section.id }}"
+         data-autoplay="{{ section.settings.autoplay }}"
+         data-interval="{{ section.settings.interval }}">
+
+  {% for block in section.blocks %}
+    <div data-ref="item"
+         data-block="{{ block.type }}"
+         data-block-id="{{ block.id }}"
+         data-state="{% if forloop.first %}active{% else %}idle{% endif %}">
+      {{ block.settings.content }}
+    </div>
+  {% endfor %}
+
+  <div class="controls">
+    <button data-action="prev">← Previous</button>
+    <button data-action="next">Next →</button>
+  </div>
+
+</section>
+```
+  </Tab>
+  <Tab title="Bundle registration">
+```javascript
+// packages/render-backend/scripts/build-sections.mjs
+{
+  type:   '<type>',
+  source: join(editorSectionsDir, '<type>.ts'),
+  output: 'corvex-<type>',
+},
+```
+
+```typescript
+// packages/render-backend/src/engine/section-scripts.ts
+'<type>': { src: '/assets/sections/corvex-<type>.js' },
+```
+
+```typescript
+// packages/editor-frontend/src/lib/corvex-sections-init.ts
+import './sections/<type>';
+```
+
+```bash
+npm run build:sections --workspace=render-backend
+```
+  </Tab>
+</Tabs>
+
+---
+
+## 4. Product showcase section
+
+Use this template for curated product displays, featured collections, or product vitrines. Merchants hand-pick the products through the `product_list` setting.
+
+<CodeGroup>
+```json sections/<type>/schema.json
+{
+  "name":     "Product Showcase",
+  "category": "products",
+  "settings": [
+    { "type": "text",         "id": "title",    "label": "Title",    "default": "Featured products" },
+    { "type": "product_list", "id": "products", "label": "Products" },
+    { "type": "range",        "id": "columns",  "label": "Columns",  "min": 2, "max": 4, "step": 1, "default": 3 }
+  ]
+}
+```
+
+```liquid sections/<type>/template.liquid
+{% style %}
+  .showcase-{{ section.id }} .grid {
+    display: grid;
+    gap: 1.5rem;
+  }
+
+  @media (min-width: 768px) {
+    .showcase-{{ section.id }} .grid {
+      grid-template-columns: repeat({{ section.settings.columns }}, 1fr);
+    }
+  }
+{% endstyle %}
+
+<section class="showcase showcase-{{ section.id }}"
+         data-section-type="{{ section.type }}"
+         data-section-id="{{ section.id }}">
+
+  {% if section.settings.title != blank %}
+    <h2>{{ section.settings.title }}</h2>
+  {% endif %}
+
+  <div class="grid">
+    {% for product in section.settings.products %}
+      {% render 'product-card', product: product %}
+    {% endfor %}
+  </div>
+
+</section>
+```
+
+```liquid snippets/product-card.liquid
+<article class="product-card">
+  <a href="{{ product.url }}">
+    {% if product.images.size > 0 %}
+      <img src="{{ product.images[0].url | img_url: '400x400' }}"
+           alt="{{ product.name }}"
+           width="400"
+           height="400"
+           loading="lazy">
+    {% else %}
+      <img src="{{ 'product-placeholder.png' | repo_asset_url }}"
+           alt="{{ product.name }}">
+    {% endif %}
+
+    <h3>{{ product.name }}</h3>
+
+    <div class="price">
+      {% if product.pricing.discountedPrice %}
+        <span>{{ product.pricing.discountedPrice | money }}</span>
+        <del>{{ product.pricing.price | money }}</del>
+      {% else %}
+        <span>{{ product.pricing.price | money }}</span>
+      {% endif %}
+    </div>
+
+    {% if product.availableForSale == false %}
+      <span class="badge">Sold out</span>
+    {% endif %}
+  </a>
+</article>
+```
+</CodeGroup>
+
+---
+
+## 5. Product detail page with variant selector
+
+Use this template as the base for a product detail page (PDP). It includes a variant selector, add-to-cart button, and a TypeScript class that handles option selection and cart API calls.
+
+<Tabs>
+  <Tab title="Liquid template">
+```liquid
+<section class="product-form product-form-{{ section.id }}"
+         data-section-type="product-form"
+         data-section-id="{{ section.id }}"
+         data-product-id="{{ product.id }}"
+         data-variants='{{ product.variants | json }}'>
+
+  <div class="gallery">
+    <img data-ref="main-image"
+         src="{{ product.images[0].url | img_url: '800x' }}"
+         alt="{{ product.name }}"
+         fetchpriority="high">
+  </div>
+
+  <div class="info">
+    <h1>{{ product.name }}</h1>
+
+    <div class="pricing">
+      <span data-ref="price">{{ product.pricing.price | money }}</span>
+      {% if product.pricing.discountedPrice %}
+        <del data-ref="compare-price">{{ product.pricing.price | money }}</del>
+      {% endif %}
+    </div>
+
+    {% for option in product.options %}
+      <fieldset>
+        <legend>{{ option.name }}</legend>
+        {% for value in option.values %}
+          <label>
+            <input type="radio"
+                   name="{{ option.name | handleize }}"
+                   value="{{ value }}"
+                   data-action="select-option"
+                   data-option-name="{{ option.name }}"
+                   data-option-value="{{ value }}"
+                   {% if forloop.first %}checked{% endif %}>
+            <span>{{ value }}</span>
+          </label>
+        {% endfor %}
+      </fieldset>
+    {% endfor %}
+
+    <p data-ref="stock-message">
+      {% if product.availableForSale %}In stock{% else %}Sold out{% endif %}
+    </p>
+
+    <button data-ref="add-btn"
+            data-action="add-to-cart"
+            data-variant-id="{{ product.variants[0].id }}"
+            {% if product.availableForSale == false %}disabled{% endif %}>
+      {% if product.availableForSale %}Add to cart{% else %}Sold out{% endif %}
+    </button>
+  </div>
+
+</section>
+```
+  </Tab>
+  <Tab title="TypeScript class">
+```typescript
+// src/lib/sections/product-form.ts
+import { BaseSection, defineSection } from './base-section';
+
+interface ProductFormOptions {
+  productId: string;
+}
+
+interface Variant {
+  id: string;
+  price: number;
+  discountedPrice: number | null;
+  stock: number;
+  availableForSale: boolean;
+  image: string | null;
+  selectedOptions: Record<string, string>;
+}
+
+class ProductFormSection extends BaseSection<ProductFormOptions> {
+  static readonly type = 'product-form';
+
+  private variants: Variant[] = [];
+  private current: Variant | null = null;
+
+  mount() {
+    try {
+      this.variants = JSON.parse(this.el.dataset.variants || '[]');
+      this.current = this.variants[0] || null;
+    } catch (e) {
+      console.error('[product-form] Invalid variants JSON', e);
+      return;
+    }
+
+    this.delegate('change', { 'select-option': () => this.onOptionChange() });
+    this.delegate('click',  { 'add-to-cart':   () => this.addToCart() });
+  }
+
+  private onOptionChange() {
+    const inputs = this.$$<HTMLInputElement>('input[type="radio"]:checked');
+    const selected: Record<string, string> = {};
+    inputs.forEach(input => {
+      selected[input.dataset.optionName!] = input.dataset.optionValue!;
+    });
+
+    const match = this.variants.find(v =>
+      Object.entries(selected).every(([name, value]) => v.selectedOptions[name] === value)
+    );
+
+    if (match) {
+      this.current = match;
+      this.renderVariant();
+    }
+  }
+
+  private renderVariant() {
+    if (!this.current) return;
+
+    const priceEl = this.ref('price');
+    if (priceEl) priceEl.textContent = this.current.price.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+
+    const stockMsg = this.ref('stock-message');
+    if (stockMsg) {
+      stockMsg.textContent = this.current.availableForSale ? 'In stock' : 'Sold out';
+    }
+
+    const addBtn = this.ref<HTMLButtonElement>('add-btn');
+    if (addBtn) {
+      addBtn.disabled = !this.current.availableForSale;
+      addBtn.dataset.variantId = this.current.id;
+    }
+
+    const img = this.ref<HTMLImageElement>('main-image');
+    if (img && this.current.image) img.src = this.current.image;
+  }
+
+  private async addToCart() {
+    if (!this.current) return;
+
+    const storeId = (window as any).__STORE_ID__;
+    const res = await fetch(`/api/stores/${storeId}/cart/add`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        productId:       this.options.productId,
+        variantId:       this.current.id,
+        quantity:        1,
+        selectedOptions: this.current.selectedOptions,
+      }),
+    });
+
+    if (!res.ok) {
+      window.dispatchEvent(new CustomEvent('corvex:cart:error', {
+        detail: { message: 'Failed to add to cart' }
+      }));
+      return;
+    }
+
+    const cart = await res.json();
+    window.dispatchEvent(new CustomEvent('corvex:cart:added', { detail: { cart } }));
+  }
+}
+
+defineSection(ProductFormSection);
+```
+  </Tab>
+</Tabs>
+
+---
+
+## 6. Reusable button snippet
+
+```liquid
+{% comment %} snippets/button.liquid {% endcomment %}
+{% assign variant = variant | default: 'primary' %}
+{% assign size    = size    | default: 'medium'  %}
+{% assign target  = target  | default: '_self'   %}
+
+<a href="{{ url }}"
+   class="btn btn--{{ variant }} btn--{{ size }}"
+   target="{{ target }}"
+   {% if target == '_blank' %}rel="noopener noreferrer"{% endif %}>
+  {{ text }}
+</a>
+```
+
+**Usage:**
+
+```liquid
+{% render 'button',
+   url: '/collections/sale',
+   text: 'Shop the sale',
+   variant: 'primary',
+   size: 'large' %}
+```
+
+---
+
+## 7. Full theme.liquid layout
+
+This is the recommended starting point for your `layout/theme.liquid`. It includes the `window.__STORE_ID__` convention required by any section that calls the cart or recommendations API.
+
+```liquid
+<!DOCTYPE html>
+<html lang="{{ shop.locale | default: 'en' }}">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <title>{{ seo.title }}</title>
+    <meta name="description" content="{{ seo.description }}">
+    <link rel="canonical" href="{{ seo.canonical }}">
+
+    <meta property="og:title"       content="{{ seo.og.title }}">
+    <meta property="og:description" content="{{ seo.og.description }}">
+    <meta property="og:image"       content="{{ seo.og.image }}">
+
+    {% if shop.favicon %}<link rel="icon" href="{{ shop.favicon }}">{% endif %}
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+    <link rel="stylesheet" href="{{ 'theme.css' | asset_url }}">
+
+    <style>
+      :root {
+        --color-primary:   {{ settings.color_primary   | default: '#4f46e5' }};
+        --color-secondary: {{ settings.color_secondary | default: '#8b5cf6' }};
+        --color-bg:        {{ settings.color_bg        | default: '#ffffff' }};
+        --color-text:      {{ settings.color_text      | default: '#111111' }};
+        --font-heading:    '{{ settings.font_heading   | default: 'Inter' }}', sans-serif;
+        --font-body:       '{{ settings.font_body      | default: 'Inter' }}', sans-serif;
+      }
+    </style>
+
+    <!-- Critical onclick functions — load without defer -->
+    <script src="{{ 'header-critical.js' | asset_url }}"></script>
+
+    <!-- Injects section CSS, meta tags, and preload hints -->
+    {{ content_for_header }}
+  </head>
+
+  <body class="page-type-{{ request.page_type }}{% if request.is_editor %} is-editor{% endif %}">
+    {% section 'header' %}
+
+    <main>
+      {{ content_for_layout }}
+    </main>
+
+    {% section 'footer' %}
+
+    <!-- Required global for section JS that calls the cart API -->
+    <script>window.__STORE_ID__ = "{{ shop.id }}";</script>
+    <script src="{{ 'theme.js' | asset_url }}" defer></script>
+  </body>
+</html>
+```
+
+<Tip>
+`window.__STORE_ID__` is a Corvex convention — the backend does not inject it automatically. Any section that fetches from `/api/stores/<id>/...` depends on this line being present in your `theme.liquid`. See [Cart data](/data/cart) for more detail.
+</Tip>
+
+---
+
+## 8. Newsletter section with async submission
+
+<Tabs>
+  <Tab title="Liquid template">
+```liquid
+<section class="newsletter newsletter-{{ section.id }}"
+         data-section-type="newsletter"
+         data-section-id="{{ section.id }}"
+         data-endpoint="{{ section.settings.endpoint | default: '/api/newsletter' }}"
+         data-success-message="{{ section.settings.success_message | default: 'Subscribed!' }}">
+
+  {% if section.settings.title != blank %}
+    <h2>{{ section.settings.title }}</h2>
+  {% endif %}
+
+  <form data-ref="form">
+    <input type="email"
+           name="email"
+           placeholder="your@email.com"
+           required
+           data-ref="email">
+    <button type="submit" data-ref="submit">Subscribe</button>
+  </form>
+
+  <p data-ref="message" hidden></p>
+
+</section>
+```
+  </Tab>
+  <Tab title="TypeScript class">
+```typescript
+// src/lib/sections/newsletter.ts
+import { BaseSection, defineSection } from './base-section';
+
+interface NewsletterOptions {
+  endpoint: string;
+  successMessage: string;
+}
+
+class NewsletterSection extends BaseSection<NewsletterOptions> {
+  static readonly type = 'newsletter';
+
+  mount() {
+    const form = this.ref<HTMLFormElement>('form');
+    if (!form) return;
+    this.on(form, 'submit', this.onSubmit);
+  }
+
+  private onSubmit = async (event: Event) => {
+    event.preventDefault();
+
+    const email   = this.ref<HTMLInputElement>('email')?.value;
+    const submit  = this.ref<HTMLButtonElement>('submit');
+    const message = this.ref('message');
+
+    if (!email || !submit || !message) return;
+
+    submit.disabled    = true;
+    submit.textContent = 'Sending...';
+
+    try {
+      const res = await fetch(this.options.endpoint, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ email }),
+      });
+
+      if (!res.ok) throw new Error('Request failed');
+
+      message.textContent      = this.options.successMessage;
+      message.hidden           = false;
+      message.dataset.state    = 'success';
+      this.ref<HTMLFormElement>('form')?.reset();
+    } catch {
+      message.textContent   = 'Failed to subscribe. Please try again.';
+      message.hidden        = false;
+      message.dataset.state = 'error';
+    } finally {
+      submit.disabled    = false;
+      submit.textContent = 'Subscribe';
+    }
+  };
+}
+
+defineSection(NewsletterSection);
+```
+  </Tab>
+</Tabs>
+
+---
+
+## Adaptation checklist
+
+When you paste any template above, work through this list before testing:
+
+- Replace `<type>` with your real section name (kebab-case, same value in all four locations)
+- Replace `<TYPE>` with the PascalCase version for the TypeScript class name
+- Update the schema settings to match your actual content requirements
+- Register the bundle in `build-sections.mjs`, `section-scripts.ts`, and `corvex-sections-init.ts` if your section has JavaScript
+- Run `npm run build:sections --workspace=render-backend`
+- Test with two instances of the section on the same page to confirm CSS and state isolation
+
+## References
+
+<CardGroup cols={2}>
+  <Card title="Section Anatomy" icon="sitemap" href="/sections/anatomy">
+    How each file in a section works together
+  </Card>
+  <Card title="BaseSection API" icon="code" href="/sections/base-section">
+    Full JavaScript base class reference
+  </Card>
+  <Card title="Schema Reference" icon="list" href="/sections/schema-reference">
+    Every available setting type
+  </Card>
+  <Card title="Anti-Patterns" icon="triangle-exclamation" href="/guides/anti-patterns">
+    Common mistakes to avoid
+  </Card>
+</CardGroup>

@@ -1,0 +1,373 @@
+---
+title: "Liquid filters available in Corvex Store"
+description: "Reference for every Liquid filter in Corvex Store — string, number, array, date, and custom filters like money, asset_url, img_url, and highlight."
+---
+
+Filters transform the value to the left of the pipe character (`|`) and return a new value. You can chain multiple filters together in a single output tag, applying each transformation in sequence. This page lists every filter available in Corvex Store, starting with the custom filters specific to the platform and followed by the full standard library.
+
+## Filter syntax
+
+```liquid
+{{ value | filter }}
+{{ value | filter: argument }}
+{{ value | filter: arg1, arg2 }}
+```
+
+Chain filters left to right — the output of each filter becomes the input of the next:
+
+```liquid
+{{ product.name | strip | upcase | truncate: 40 }}
+```
+
+---
+
+## Corvex custom filters
+
+These filters are built into Corvex Store and are not part of standard Liquid.
+
+### `asset_url`
+
+Returns the CDN URL for a file in your theme's `assets/` directory. A cache-busting version query string is appended automatically:
+
+```liquid
+{{ 'theme.css'  | asset_url }}
+{{ 'theme.js'   | asset_url }}
+{{ 'banner.jpg' | asset_url }}
+```
+
+Output: `https://cdn.../stores/STORE_ID/theme.css?v=1712345678`
+
+Use `asset_url` wherever you reference stylesheets, scripts, or images stored in `assets/`. See [Assets](/themes/assets) for how to upload and manage theme files.
+
+### `img_url: 'WIDTHxHEIGHT'`
+
+Generates a resized image URL via the CDN. Pass a dimension string to control the output size:
+
+```liquid
+{{ product.images[0].url | img_url: '400x400' }}
+{{ product.images[0].url | img_url: '800x' }}     {# width only — height is proportional #}
+{{ product.images[0].url | img_url: 'x600' }}     {# height only — width is proportional #}
+```
+
+Supported dimension formats:
+
+| Format | Effect |
+|---|---|
+| `'400x400'` | Square crop |
+| `'800x'` | Fixed width, proportional height |
+| `'x600'` | Fixed height, proportional width |
+| `'1200x800_crop_center'` | Crop to exact dimensions, centered |
+| `'400x400_format_webp'` | Force WebP output |
+
+<Warning>
+If the image value is `blank` or `null`, `img_url` returns an empty string. Always check `{% if product.images[0].url != blank %}` before rendering an `<img>` tag, or use `| default: ''` with a placeholder.
+</Warning>
+
+### `repo_asset_url`
+
+Returns the URL for a platform-level asset (not a store-specific file). Use this for built-in placeholders and icons provided by Corvex:
+
+```liquid
+{{ 'product-placeholder.png' | repo_asset_url }}
+{{ 'icons/cart.svg'          | repo_asset_url }}
+```
+
+Output: `https://cdn.corvex.com.br/platform/product-placeholder.png?v=...`
+
+### `money`
+
+Formats a numeric price using the store's currency and locale settings:
+
+```liquid
+{{ 49.90   | money }}    {# R$ 49,90 #}
+{{ 1234.50 | money }}    {# R$ 1.234,50 #}
+```
+
+### `money_without_currency`
+
+Formats the number without the currency symbol:
+
+```liquid
+{{ 49.90 | money_without_currency }}    {# 49,90 #}
+```
+
+### `money_with_currency_code`
+
+Appends the ISO currency code after the formatted amount:
+
+```liquid
+{{ 49.90 | money_with_currency_code }}    {# R$ 49,90 BRL #}
+```
+
+All three `money` filters respect `shop.currency` and `shop.locale`.
+
+### `highlight: "term"`
+
+Wraps every occurrence of a search term in a `<mark>` element. Use this on search results pages to visually highlight what the user searched for:
+
+```liquid
+{{ product.name | highlight: search_term }}
+```
+
+### `pluralize: "singular", "plural"`
+
+Returns the singular or plural form of a word based on the preceding number:
+
+```liquid
+{{ product.variants.size | pluralize: 'variant', 'variants' }}
+{# "1 variant" or "3 variants" #}
+```
+
+### `json`
+
+Serializes any Liquid value to a JSON string. Use this to pass server-side data into a `<script>` block or an HTML `data-*` attribute:
+
+```liquid
+<script>
+  window.__PRODUCTS__ = {{ products | json }};
+</script>
+
+<section data-variants='{{ product.variants | json }}'>
+```
+
+Then read it in your JavaScript:
+
+```javascript
+const variants = JSON.parse(this.el.dataset.variants);
+```
+
+---
+
+## String filters
+
+| Filter | Description | Example |
+|---|---|---|
+| `upcase` | Convert to uppercase | `{{ "hello" \| upcase }}` → `HELLO` |
+| `downcase` | Convert to lowercase | `{{ "HELLO" \| downcase }}` → `hello` |
+| `capitalize` | Capitalize first letter | `{{ "hello world" \| capitalize }}` → `Hello world` |
+| `strip` | Remove leading and trailing whitespace | `{{ "  hi  " \| strip }}` → `hi` |
+| `lstrip` | Remove leading whitespace only | — |
+| `rstrip` | Remove trailing whitespace only | — |
+| `truncate: N` | Cut to N characters, appending `"..."` | `{{ "abcdefgh" \| truncate: 5 }}` → `ab...` |
+| `truncatewords: N` | Cut to N words, appending `"..."` | — |
+| `replace: "a", "b"` | Replace all occurrences of `a` with `b` | — |
+| `remove: "x"` | Remove all occurrences of `x` | — |
+| `append: "suffix"` | Concatenate a string to the end | — |
+| `prepend: "prefix"` | Concatenate a string to the start | — |
+| `newline_to_br` | Replace `\n` with `<br>` | — |
+| `strip_html` | Remove all HTML tags | — |
+| `escape` | Escape HTML entities | `&` → `&amp;` |
+| `size` | Length of a string or array | — |
+| `slice: start, length` | Extract a substring | `{{ "hello" \| slice: 0, 3 }}` → `hel` |
+| `split: ","` | Split a string into an array | — |
+| `handleize` | Convert to a URL-safe slug | `"My Shop!" → "my-shop"` |
+| `url_encode` | Percent-encode a string for use in a URL | — |
+| `url_decode` | Decode a percent-encoded string | — |
+
+---
+
+## Number filters
+
+| Filter | Description |
+|---|---|
+| `plus: N` | Add |
+| `minus: N` | Subtract |
+| `times: N` | Multiply |
+| `divided_by: N` | Divide (integer division if both operands are integers) |
+| `modulo: N` | Remainder |
+| `round` / `round: N` | Round to nearest integer or N decimal places |
+| `ceil` | Round up |
+| `floor` | Round down |
+| `abs` | Absolute value |
+| `at_most: N` | Clamp to a maximum value |
+| `at_least: N` | Clamp to a minimum value |
+
+Calculate a discount percentage:
+
+```liquid
+{% assign saving = product.pricing.price | minus: product.pricing.discountedPrice %}
+{% assign pct = saving | times: 100.0 | divided_by: product.pricing.price | round %}
+<span class="badge">-{{ pct }}%</span>
+```
+
+---
+
+## Array filters
+
+| Filter | Description | Example |
+|---|---|---|
+| `first` | Return first item | `{{ arr \| first }}` |
+| `last` | Return last item | — |
+| `size` | Number of items | — |
+| `join: ", "` | Concatenate items with a separator | — |
+| `reverse` | Reverse the order | — |
+| `sort` | Sort ascending | `{{ arr \| sort }}` |
+| `sort: 'key'` | Sort by object property | `{{ products \| sort: 'name' }}` |
+| `uniq` | Remove duplicates | — |
+| `where: 'key', value` | Keep items where `key` equals `value` | `{{ products \| where: 'featured', true }}` |
+| `map: 'key'` | Extract a property from each item | `{{ products \| map: 'id' }}` |
+| `concat: other_array` | Join two arrays | — |
+| `compact` | Remove `null` values | — |
+| `limit: N` | Return first N items | — |
+| `offset: N` | Skip first N items | — |
+
+Build a featured product list with chained filters:
+
+```liquid
+{% assign featured = products | where: 'featured', true | limit: 4 %}
+
+{% for product in featured %}
+  {{ product.name }}
+{% endfor %}
+```
+
+Chain multiple operations to produce a sorted, filtered value list:
+
+```liquid
+{{ collection.products
+   | where: 'featured', true
+   | sort: 'createdAt'
+   | reverse
+   | limit: 8
+   | map: 'slug'
+   | join: ',' }}
+```
+
+---
+
+## Date filters
+
+| Filter | Description |
+|---|---|
+| `date: "%Y-%m-%d"` | ISO format (2025-01-15) |
+| `date: "%d/%m/%Y"` | Day/month/year (15/01/2025) |
+| `date: "%B %Y"` | Full month name and year (January 2025) |
+
+Supported `strftime` tokens:
+
+| Token | Output |
+|---|---|
+| `%Y` | Four-digit year (2025) |
+| `%m` | Zero-padded month (01–12) |
+| `%d` | Zero-padded day (01–31) |
+| `%H` | Hour in 24 h format (00–23) |
+| `%M` | Zero-padded minute (00–59) |
+| `%B` | Full month name (January) |
+| `%b` | Abbreviated month name (Jan) |
+| `%A` | Full day name (Monday) |
+
+```liquid
+<time datetime="{{ product.createdAt }}">
+  {{ product.createdAt | date: "%d/%m/%Y" }}
+</time>
+```
+
+---
+
+## The `default` filter
+
+Return a fallback value when the input is `nil`, `false`, an empty string, or `blank`:
+
+```liquid
+{{ section.settings.title   | default: 'Default title' }}
+{{ product.shortDescription | default: product.description }}
+{{ settings.color_primary   | default: '#000000' }}
+```
+
+---
+
+## Practical recipes
+
+<AccordionGroup>
+  <Accordion title="Price with discount badge">
+    ```liquid
+    {% if product.pricing.discountedPrice %}
+      {% assign saving = product.pricing.price | minus: product.pricing.discountedPrice %}
+      {% assign pct = saving | times: 100.0 | divided_by: product.pricing.price | round %}
+      <span class="badge">-{{ pct }}%</span>
+      <s>{{ product.pricing.price | money }}</s>
+      {{ product.pricing.discountedPrice | money }}
+    {% else %}
+      {{ product.pricing.price | money }}
+    {% endif %}
+    ```
+  </Accordion>
+  <Accordion title="Truncated description without HTML">
+    ```liquid
+    <p>{{ product.description | strip_html | truncate: 160 }}</p>
+    ```
+  </Accordion>
+  <Accordion title="Product card image with placeholder fallback">
+    ```liquid
+    {% assign image = product.images[0].url | default: '' %}
+    {% if image != blank %}
+      <img src="{{ image | img_url: '400x400' }}" alt="{{ product.name }}">
+    {% else %}
+      <img src="{{ 'product-placeholder.png' | repo_asset_url }}" alt="{{ product.name }}">
+    {% endif %}
+    ```
+  </Accordion>
+  <Accordion title="URL slug from product name">
+    ```liquid
+    <a href="/product/{{ product.name | handleize }}">{{ product.name }}</a>
+    ```
+  </Accordion>
+  <Accordion title="Pass data array to JavaScript">
+    ```liquid
+    <section data-variants='{{ product.variants | json }}'>
+    ```
+
+    ```javascript
+    const variants = JSON.parse(this.el.dataset.variants);
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Debugging filters
+
+Inspect any object's full structure during development:
+
+```liquid
+<pre>{{ product | json }}</pre>
+<pre>{{ section.settings | json }}</pre>
+```
+
+Check for nil, blank, and empty:
+
+```liquid
+{% if product == nil %}nil{% endif %}
+{% if product == blank %}blank{% endif %}
+{% if product == empty %}empty array or string{% endif %}
+```
+
+---
+
+## Unsupported Shopify filters
+
+| Shopify filter | Alternative in Corvex |
+|---|---|
+| `weight` | Access `product.physical.weight` directly |
+| `link_to` | Write `<a href="{{ url }}">{{ text }}</a>` directly |
+| `product_img_url` | Use `img_url` — identical behavior |
+| `font_face` / `font_url` | Declare fonts manually in `theme.liquid` |
+| `currency_selector` | No native multi-currency support |
+| `payment_type_img_url` | Use your own assets |
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="Liquid overview" icon="book" href="/engine/liquid">
+    Syntax, variables, loops, and Shopify compatibility notes.
+  </Card>
+  <Card title="Tags reference" icon="tag" href="/engine/tags">
+    Every supported tag including custom Corvex tags.
+  </Card>
+  <Card title="Theme assets" icon="folder" href="/themes/assets">
+    How to upload files and reference them with `asset_url`.
+  </Card>
+  <Card title="Product data" icon="box" href="/data/product">
+    The full shape of the `product` object available in templates.
+  </Card>
+</CardGroup>

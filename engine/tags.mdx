@@ -1,0 +1,391 @@
+---
+title: "Liquid tags supported in Corvex Store"
+description: "Complete reference for every Liquid tag available in Corvex Store — control flow, iteration, variables, and custom tags like section, render, style, and schema."
+---
+
+Corvex Store supports a curated set of Liquid tags that covers control flow, iteration, variables, and a collection of custom tags unique to the platform. If a tag is not listed here, it is not supported — notably, several advanced Shopify-specific tags such as `{% paginate %}` and `{% form %}` do not work in Corvex templates.
+
+## Control flow
+
+### `if` / `elsif` / `else`
+
+```liquid
+{% if product.availableForSale %}
+  In stock
+{% elsif product.pricing.price > 100 %}
+  Premium item
+{% else %}
+  Out of stock
+{% endif %}
+```
+
+Use `contains` to check strings and arrays:
+
+```liquid
+{% if product.name contains 'Limited' %}
+  <span class="badge">Limited edition</span>
+{% endif %}
+
+{% if product.categories.size > 0 and product.pricing.discountedPrice %}
+  <span class="sale-badge">Sale</span>
+{% endif %}
+```
+
+Supported operators: `==`, `!=`, `<`, `>`, `<=`, `>=`, `and`, `or`, `contains`.
+
+### `unless` / `endunless`
+
+`unless` is the inverse of `if`. Use it when a positive condition reads awkwardly:
+
+```liquid
+{% unless product.availableForSale %}
+  <p>Out of stock</p>
+{% endunless %}
+```
+
+### `case` / `when` / `else`
+
+Match a single value against multiple branches:
+
+```liquid
+{% case product.type %}
+  {% when 'PHYSICAL' %}
+    Physical product
+  {% when 'DIGITAL' %}
+    Digital product
+  {% when 'MEMBERSHIP' %}
+    Subscription
+  {% else %}
+    Other
+{% endcase %}
+```
+
+## Iteration
+
+### `for`
+
+```liquid
+{% for product in products %}
+  <h3>{{ product.name }}</h3>
+{% endfor %}
+```
+
+#### `limit` and `offset`
+
+```liquid
+{% for product in products limit: 8 %}
+  ...
+{% endfor %}
+
+{% for product in products offset: 8 limit: 8 %}
+  ...
+{% endfor %}
+```
+
+<Tip>
+Prefer `limit` directly on the `for` tag over the `| limit` filter — the tag stops iterating early instead of filtering after the full loop.
+</Tip>
+
+#### `reversed`
+
+```liquid
+{% for product in products reversed %}
+  ...
+{% endfor %}
+```
+
+#### Numeric range
+
+```liquid
+{% for i in (1..5) %}
+  Step {{ i }}
+{% endfor %}
+```
+
+#### `forloop` variables
+
+The `forloop` object is available inside every `for` block:
+
+```liquid
+{% for product in products %}
+  {% if forloop.first %}<ul>{% endif %}
+
+  <li data-index="{{ forloop.index }}">
+    {{ forloop.index0 }}/{{ forloop.length }}: {{ product.name }}
+  </li>
+
+  {% if forloop.last %}</ul>{% endif %}
+{% endfor %}
+```
+
+| Variable | Value |
+|---|---|
+| `forloop.index` | 1-indexed position (1, 2, 3 …) |
+| `forloop.index0` | 0-indexed position (0, 1, 2 …) |
+| `forloop.rindex` | Reverse 1-indexed position |
+| `forloop.first` | `true` on first iteration |
+| `forloop.last` | `true` on last iteration |
+| `forloop.length` | Total number of iterations |
+
+#### `break` and `continue`
+
+Skip an iteration or exit the loop early:
+
+```liquid
+{% for product in products %}
+  {% if product.availableForSale == false %}
+    {% continue %}
+  {% endif %}
+
+  {% if forloop.index > 20 %}
+    {% break %}
+  {% endif %}
+
+  {{ product.name }}
+{% endfor %}
+```
+
+#### `else` in `for`
+
+The `else` branch renders only when the array is empty or the loop has zero iterations:
+
+```liquid
+{% for product in collection.products %}
+  {{ product.name }}
+{% else %}
+  <p>No products in this collection.</p>
+{% endfor %}
+```
+
+## Variables
+
+### `assign`
+
+Create or overwrite a variable. You can apply filters as part of the assignment:
+
+```liquid
+{% assign featured = product.featured %}
+{% assign price = product.pricing.discountedPrice | default: product.pricing.price %}
+{% assign slug = product.name | handleize %}
+```
+
+### `capture`
+
+Capture multi-line rendered output into a variable:
+
+```liquid
+{% capture image_url %}
+  {{ product.images[0].url | img_url: '800x' }}
+{% endcapture %}
+
+<img src="{{ image_url }}" alt="{{ product.name }}">
+```
+
+### `increment` / `decrement`
+
+Maintain a running counter without `assign`:
+
+```liquid
+{% for product in products %}
+  {% increment product_count %}
+{% endfor %}
+
+Total: {{ product_count }}
+```
+
+<Info>
+`increment` resets per template render. For logic that must be reliable across conditional branches, use `assign` with arithmetic filters instead.
+</Info>
+
+### `comment`
+
+Block comments are stripped from the rendered output:
+
+```liquid
+{% comment %}
+  This block does not render.
+  Useful for documenting template logic.
+{% endcomment %}
+```
+
+## Corvex custom tags
+
+These tags are unique to Corvex Store and extend the standard Liquid tag set.
+
+### `{% section 'name' %}`
+
+Renders a section by type name at the current position in the template. Use this in `theme.liquid` to place the header and footer around the page content:
+
+```liquid
+{% section 'header' %}
+
+<main>
+  {{ content_for_layout }}
+</main>
+
+{% section 'footer' %}
+```
+
+### `{% render 'name' [, variable: value] %}`
+
+Renders a snippet from your theme's `snippets/` directory. Variables you pass are available inside the snippet, but the snippet does not inherit the parent template's scope — this isolation prevents accidental variable collisions:
+
+```liquid
+{% render 'product-card', product: featured_product, size: 'large' %}
+{% render 'icon-cart' %}
+{% render 'star-rating', rating: product.rating, max: 5 %}
+```
+
+### `{% include 'name' [with variable] %}`
+
+Renders a snippet with the **parent template's scope shared** into the snippet. This is the legacy form — prefer `render` for all new templates because the shared scope makes snippets harder to reason about:
+
+```liquid
+{% include 'product-card' %}
+```
+
+<Warning>
+`include` is supported for backward compatibility but is considered legacy. New sections and snippets should use `{% render %}` for proper scope isolation.
+</Warning>
+
+### `{% style %}` … `{% endstyle %}`
+
+Writes CSS that Corvex automatically moves to the `<head>`. Liquid output tags (`{{ }}`) work inside the block, so you can read from `section.settings`:
+
+```liquid
+{% style %}
+  .banner-{{ section.id }} {
+    background: {{ section.settings.bg_color | default: '#1a1a1a' }};
+    padding: {{ section.settings.padding | default: 60 }}px 0;
+  }
+
+  @media (max-width: 768px) {
+    .banner-{{ section.id }} {
+      padding: 30px 0;
+    }
+  }
+{% endstyle %}
+```
+
+<Warning>
+Always scope your CSS selectors using `section.id` (for example, `.my-section-{{ section.id }}`). If the same section type appears more than once on a page, each instance has a unique `section.id`, so scoped selectors prevent style collisions.
+</Warning>
+
+### `{% javascript %}` … `{% endjavascript %}`
+
+Writes JavaScript that is inserted before `</body>`. Liquid output tags work inside the block:
+
+```liquid
+{% javascript %}
+  document.addEventListener('DOMContentLoaded', function() {
+    var el = document.querySelector('[data-section-id="{{ section.id }}"]');
+    console.log('Section mounted:', el);
+  });
+{% endjavascript %}
+```
+
+<Warning>
+Always wrap DOM access in `DOMContentLoaded` inside `{% javascript %}` blocks. The tag is rendered inline in the body, but the order of execution relative to other scripts is not guaranteed.
+</Warning>
+
+For a full comparison of `{% javascript %}` vs `<script>` and when to use each, see [Scripts and styles](/engine/scripts-and-styles).
+
+### `{% schema %}` … `{% endschema %}`
+
+Declares the section's settings schema as a JSON object. The schema block does not render any HTML — it is read by the editor to generate the settings panel:
+
+```liquid
+{% schema %}
+{
+  "name": "My Section",
+  "settings": [
+    { "type": "text",  "id": "title",  "label": "Title",      "default": "Hello" },
+    { "type": "color", "id": "bg",     "label": "Background", "default": "#ffffff" }
+  ]
+}
+{% endschema %}
+```
+
+<Info>
+You can also keep the schema in a separate `.json` file alongside the template. Both approaches work — the separate file gives you syntax highlighting and JSON validation in most editors.
+</Info>
+
+### `{% layout 'name' %}`
+
+Override the default layout (`theme.liquid`) for a specific template:
+
+```liquid
+{% layout 'minimal' %}
+
+<!-- Renders using layouts/minimal.liquid instead of theme.liquid -->
+```
+
+## Unsupported tags
+
+The following Shopify Liquid tags are **not available** in Corvex Store:
+
+| Tag | Alternative in Corvex |
+|---|---|
+| `{% paginate %}` | Implement manual pagination using a query parameter |
+| `{% form %}` | Use a plain `<form>` element with `fetch` in JavaScript |
+| `{% raw %}` | Escape Liquid delimiters manually |
+| `{% tablerow %}` | Use `{% for %}` with CSS grid or table markup |
+| `{% cycle %}` | Use `{% assign %}` with the `modulo` filter |
+| `{% style_tag %}` | Use `{% style %}` (different name, same purpose) |
+| `{% echo %}` | Use `{{ variable }}` output syntax |
+| `{% liquid %}` (multi-line) | Write individual tags on separate lines |
+
+## Tips
+
+<AccordionGroup>
+  <Accordion title="Debug any variable with the json filter">
+    Dump the full contents of any object to the page during development:
+
+    ```liquid
+    <pre>{{ product | json }}</pre>
+    <pre>{{ section.settings | json }}</pre>
+    ```
+  </Accordion>
+  <Accordion title="Use assign with default to avoid duplicate checks">
+    Instead of repeating a nil check in multiple places, assign once with a fallback:
+
+    ```liquid
+    {% assign price = product.pricing.discountedPrice | default: product.pricing.price %}
+    ```
+  </Accordion>
+  <Accordion title="Use capture for multi-line logic">
+    When a block of markup depends on complex logic, `capture` keeps the template readable:
+
+    ```liquid
+    {% capture badge %}
+      {% if product.pricing.compareAtPrice > product.pricing.price %}
+        <span class="badge-sale">Sale</span>
+      {% elsif product.featured %}
+        <span class="badge-featured">Featured</span>
+      {% endif %}
+    {% endcapture %}
+
+    <div class="card">
+      {{ badge }}
+      <h3>{{ product.name }}</h3>
+    </div>
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="Liquid overview" icon="book" href="/engine/liquid">
+    Liquid syntax, output, variables, and differences from Shopify Liquid.
+  </Card>
+  <Card title="Filters reference" icon="filter" href="/engine/filters">
+    All standard and custom Corvex filters.
+  </Card>
+  <Card title="Scripts and styles" icon="layers" href="/engine/scripts-and-styles">
+    When to use `{% style %}` vs `<style>` and `{% javascript %}` vs `<script>`.
+  </Card>
+  <Card title="Section anatomy" icon="layout-grid" href="/sections/anatomy">
+    How a section file is structured, including the schema block.
+  </Card>
+</CardGroup>
